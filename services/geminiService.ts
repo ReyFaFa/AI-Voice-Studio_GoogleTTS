@@ -108,33 +108,48 @@ async function _generateAudio(
       finalPrompt = `[Instructions]\n${instructions.join('\n')}\n\n[Text to Read]\n${prompt}`;
     }
 
-    // Use the passed modelName
-    const response: GenerateContentResponse = await ai.models.generateContent({
+    if (!ai) {
+      throw new Error("API 키가 설정되지 않았습니다.");
+    }
+
+    // Use unified SDK style: ai.models.generateContent
+    console.log(`[Gemini API Request] Model: ${modelName}, Prompt Length: ${finalPrompt.length}`);
+
+    const response = await (ai as any).models.generateContent({
       model: modelName,
-      contents: [{ parts: [{ text: finalPrompt }] }],
-      config: config,
-      safetySettings: [
-        { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
-        { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
-        { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
-        { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
-        { category: 'HARM_CATEGORY_CIVIC_INTEGRITY', threshold: 'BLOCK_NONE' },
-      ]
+      contents: [{ role: 'user', parts: [{ text: finalPrompt }] }],
+      config: {
+        ...config,
+        safetySettings: [
+          { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+          { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+          { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+          { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
+          { category: 'HARM_CATEGORY_CIVIC_INTEGRITY', threshold: 'BLOCK_NONE' },
+        ]
+      }
     });
 
-    const audioPart = response.candidates?.[0]?.content?.parts.find(part => part.inlineData);
+    console.log("[Gemini API Full Response]", JSON.stringify(response, null, 2));
+
+    const candidate = response.candidates?.[0];
+    const audioPart = candidate?.content?.parts.find((part: any) => part.inlineData);
     const data = audioPart?.inlineData?.data;
 
     if (!data) {
-      console.error("API response did not contain audio data:", response);
-      if (response.candidates?.[0]?.finishReason === 'SAFETY') {
-        throw new Error('오디오 생성 중 안전 필터에 의해 콘텐츠가 차단되었습니다. 텍스트 내용을 확인해주세요.');
+      console.error("API response missing audio. Full candidate:", candidate);
+
+      if (candidate?.finishReason === 'SAFETY') {
+        throw new Error(`안전 필터에 의해 차단되었습니다. (FinishReason: SAFETY). 문제가 된 텍스트 일부: "${prompt.substring(0, 100)}..."`);
       }
-      if (response.candidates?.[0]?.content?.parts?.[0]?.text) {
-        console.warn("Model responded with text instead of audio:", response.candidates[0].content.parts[0].text);
-        throw new Error('AI가 오디오 대신 텍스트로 응답했습니다. 프롬프트 지시어 충돌이 의심됩니다.');
+
+      const textPart = candidate?.content?.parts?.[0]?.text;
+      if (textPart) {
+        console.warn("Model responded with text instead of audio:", textPart);
+        throw new Error(`AI가 오디오 대신 텍스트로 응답했습니다: "${textPart.substring(0, 150)}..."`);
       }
-      throw new Error('오디오 생성에 실패했습니다. AI의 응답이 불완전하거나 비어있습니다.');
+
+      throw new Error(`오디오 데이터 누락 (FinishReason: ${candidate?.finishReason || 'UNKNOWN'}). API 응답 구조가 평소와 다릅니다. 콘솔 로그를 확인해주세요.`);
     }
 
     return data;

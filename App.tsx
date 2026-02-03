@@ -410,63 +410,80 @@ export function App() {
 
             for (let i = 0; i < totalChunks; i++) {
                 const chunkText = textChunks[i];
-                setLoadingStatus(`오디오 생성 중 (${i + 1}/${totalChunks})...`);
 
-                // Step 2: Generate Audio for this chunk
-                const base64Pcm = await generateSingleSpeakerAudio(
-                    chunkText,
-                    singleSpeakerVoice,
-                    selectedModel,
-                    speechSpeed,
-                    stylePrompt,
-                    abortControllerRef.current.signal
-                );
+                try {
+                    console.log(`[Chunk Loop] Starting chunk ${i + 1}/${totalChunks}...`);
+                    setLoadingStatus(`오디오 생성 중 (${i + 1}/${totalChunks})...`);
 
-                setLoadingStatus(`오디오 처리 중 (${i + 1}/${totalChunks})...`);
-                const chunkBlob = createWavBlobFromBase64Pcm(base64Pcm);
-                const chunkBuffer = await audioContext.decodeAudioData(await chunkBlob.arrayBuffer());
-
-                // Step 3: Transcribe this chunk
-                setLoadingStatus(`자막 생성 중 (${i + 1}/${totalChunks})...`);
-                const chunkWavBase64 = await audioBufferToWavBase64(chunkBuffer);
-                const chunkSrt = await transcribeAudioWithSrt(
-                    chunkWavBase64,
-                    srtSplitCharCount,
-                    abortControllerRef.current.signal,
-                    chunkText
-                );
-
-                const parsedChunkSrt = parseSrt(chunkSrt);
-
-                // Step 4: Apply time offset to SRT and collect
-                parsedChunkSrt.forEach(line => {
-                    const shiftedStartMs = srtTimeToMs(line.startTime) + currentTimeOffsetMs;
-                    const shiftedEndMs = srtTimeToMs(line.endTime) + currentTimeOffsetMs;
-                    allParsedSrt.push({
-                        ...line,
-                        startTime: msToSrtTime(shiftedStartMs),
-                        endTime: msToSrtTime(shiftedEndMs)
-                    });
-                });
-
-                // Step 5: Merge Audio Buffers
-                if (!mergedAudioBuffer) {
-                    mergedAudioBuffer = chunkBuffer;
-                } else {
-                    const combined = audioContext.createBuffer(
-                        mergedAudioBuffer.numberOfChannels,
-                        mergedAudioBuffer.length + chunkBuffer.length,
-                        mergedAudioBuffer.sampleRate
+                    // Step 2: Generate Audio for this chunk
+                    const base64Pcm = await generateSingleSpeakerAudio(
+                        chunkText,
+                        singleSpeakerVoice,
+                        selectedModel,
+                        speechSpeed,
+                        stylePrompt,
+                        abortControllerRef.current.signal
                     );
-                    for (let channel = 0; channel < mergedAudioBuffer.numberOfChannels; channel++) {
-                        const combinedData = combined.getChannelData(channel);
-                        combinedData.set(mergedAudioBuffer.getChannelData(channel), 0);
-                        combinedData.set(chunkBuffer.getChannelData(channel), mergedAudioBuffer.length);
-                    }
-                    mergedAudioBuffer = combined;
-                }
 
-                currentTimeOffsetMs += (chunkBuffer.duration * 1000);
+                    setLoadingStatus(`오디오 처리 중 (${i + 1}/${totalChunks})...`);
+                    const chunkBlob = createWavBlobFromBase64Pcm(base64Pcm);
+                    const chunkBuffer = await audioContext.decodeAudioData(await chunkBlob.arrayBuffer());
+
+                    // Step 3: Transcribe this chunk
+                    setLoadingStatus(`자막 생성 중 (${i + 1}/${totalChunks})...`);
+                    const chunkWavBase64 = await audioBufferToWavBase64(chunkBuffer);
+                    const chunkSrt = await transcribeAudioWithSrt(
+                        chunkWavBase64,
+                        srtSplitCharCount,
+                        abortControllerRef.current.signal,
+                        chunkText
+                    );
+
+                    const parsedChunkSrt = parseSrt(chunkSrt);
+
+                    // Step 4: Apply time offset to SRT and collect
+                    parsedChunkSrt.forEach(line => {
+                        const shiftedStartMs = srtTimeToMs(line.startTime) + currentTimeOffsetMs;
+                        const shiftedEndMs = srtTimeToMs(line.endTime) + currentTimeOffsetMs;
+                        allParsedSrt.push({
+                            ...line,
+                            startTime: msToSrtTime(shiftedStartMs),
+                            endTime: msToSrtTime(shiftedEndMs)
+                        });
+                    });
+
+                    // Step 5: Merge Audio Buffers
+                    if (!mergedAudioBuffer) {
+                        mergedAudioBuffer = chunkBuffer;
+                    } else {
+                        const combined = audioContext.createBuffer(
+                            mergedAudioBuffer.numberOfChannels,
+                            mergedAudioBuffer.length + chunkBuffer.length,
+                            mergedAudioBuffer.sampleRate
+                        );
+                        for (let channel = 0; channel < mergedAudioBuffer.numberOfChannels; channel++) {
+                            const combinedData = combined.getChannelData(channel);
+                            combinedData.set(mergedAudioBuffer.getChannelData(channel), 0);
+                            combinedData.set(chunkBuffer.getChannelData(channel), mergedAudioBuffer.length);
+                        }
+                        mergedAudioBuffer = combined;
+                    }
+
+                    currentTimeOffsetMs += (chunkBuffer.duration * 1000);
+                    console.log(`[Chunk Loop] Successfully finished chunk ${i + 1}/${totalChunks}.`);
+
+                } catch (chunkError) {
+                    console.error(`[Chunk Loop] Error in chunk ${i + 1}:`, chunkError);
+                    if (i === 0) {
+                        // Fail if the very first chunk fails
+                        throw chunkError;
+                    } else {
+                        // Partial success: Break loop and process what we have so far
+                        console.warn(`[Chunk Loop] Partial success. Proceeding with first ${i} chunks.`);
+                        setError(`${i + 1}번째 구간에서 오류가 발생했습니다. 현재까지 생성된 부분(${i}개 구간)만 가져옵니다.`);
+                        break;
+                    }
+                }
             }
 
             if (!mergedAudioBuffer) throw new Error("오디오 생성 결과가 비어있습니다.");
