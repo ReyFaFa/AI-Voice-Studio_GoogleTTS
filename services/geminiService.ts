@@ -111,7 +111,7 @@ async function _generateAudio(
     // Use the passed modelName
     const response: GenerateContentResponse = await ai.models.generateContent({
       model: modelName,
-      contents: { parts: [{ text: finalPrompt }] },
+      contents: [{ parts: [{ text: finalPrompt }] }],
       config: config,
     });
 
