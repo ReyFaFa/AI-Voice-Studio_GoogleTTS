@@ -7,9 +7,9 @@ import { SrtLine } from '../types';
 
 // Helper function to write strings into a DataView for the WAV header
 function writeString(view: DataView, offset: number, str: string) {
-  for (let i = 0; i < str.length; i++) {
-    view.setUint8(offset + i, str.charCodeAt(i));
-  }
+    for (let i = 0; i < str.length; i++) {
+        view.setUint8(offset + i, str.charCodeAt(i));
+    }
 }
 
 /**
@@ -18,39 +18,39 @@ function writeString(view: DataView, offset: number, str: string) {
  * @returns A Blob representing a valid WAV file.
  */
 export const createWavBlobFromBase64Pcm = (base64Pcm: string): Blob => {
-  const pcmData = atob(base64Pcm);
-  const sampleRate = 24000; // As per Gemini TTS documentation
-  const numChannels = 1;
-  const bitsPerSample = 16;
-  
-  const dataSize = pcmData.length;
-  const buffer = new ArrayBuffer(44 + dataSize);
-  const view = new DataView(buffer);
+    const pcmData = atob(base64Pcm);
+    const sampleRate = 24000; // As per Gemini TTS documentation
+    const numChannels = 1;
+    const bitsPerSample = 16;
 
-  const blockAlign = (numChannels * bitsPerSample) / 8;
-  const byteRate = sampleRate * blockAlign;
-  
-  writeString(view, 0, 'RIFF');
-  view.setUint32(4, 36 + dataSize, true);
-  writeString(view, 8, 'WAVE');
-  
-  writeString(view, 12, 'fmt ');
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, numChannels, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, byteRate, true);
-  view.setUint16(32, blockAlign, true);
-  view.setUint16(34, bitsPerSample, true);
-  
-  writeString(view, 36, 'data');
-  view.setUint32(40, dataSize, true);
+    const dataSize = pcmData.length;
+    const buffer = new ArrayBuffer(44 + dataSize);
+    const view = new DataView(buffer);
 
-  for (let i = 0; i < dataSize; i++) {
-    view.setUint8(44 + i, pcmData.charCodeAt(i));
-  }
+    const blockAlign = (numChannels * bitsPerSample) / 8;
+    const byteRate = sampleRate * blockAlign;
 
-  return new Blob([view], { type: 'audio/wav' });
+    writeString(view, 0, 'RIFF');
+    view.setUint32(4, 36 + dataSize, true);
+    writeString(view, 8, 'WAVE');
+
+    writeString(view, 12, 'fmt ');
+    view.setUint32(16, 16, true);
+    view.setUint16(20, 1, true);
+    view.setUint16(22, numChannels, true);
+    view.setUint32(24, sampleRate, true);
+    view.setUint32(28, byteRate, true);
+    view.setUint16(32, blockAlign, true);
+    view.setUint16(34, bitsPerSample, true);
+
+    writeString(view, 36, 'data');
+    view.setUint32(40, dataSize, true);
+
+    for (let i = 0; i < dataSize; i++) {
+        view.setUint8(44 + i, pcmData.charCodeAt(i));
+    }
+
+    return new Blob([view], { type: 'audio/wav' });
 };
 
 
@@ -64,7 +64,7 @@ export const encodeAudioBufferToWavBlob = (audioBuffer: AudioBuffer): Blob => {
     const numChannels = audioBuffer.numberOfChannels;
     const pcmData = audioBuffer.getChannelData(0); // Assuming mono
     const bitsPerSample = 16;
-    
+
     const buffer = new ArrayBuffer(44 + pcmData.length * 2);
     const view = new DataView(buffer);
 
@@ -104,27 +104,27 @@ export const encodeAudioBufferToWavBlob = (audioBuffer: AudioBuffer): Blob => {
  * @returns A new, sliced AudioBuffer.
  */
 export const sliceAudioBuffer = (
-  buffer: AudioBuffer,
-  startTime: number,
-  endTime: number,
-  audioCtx: AudioContext
+    buffer: AudioBuffer,
+    startTime: number,
+    endTime: number,
+    audioCtx: AudioContext
 ): AudioBuffer => {
-  const { sampleRate, numberOfChannels, duration } = buffer;
-  const startSample = Math.floor(startTime * sampleRate);
-  const endSample = Math.floor(Math.min(endTime, duration) * sampleRate);
-  const frameCount = endSample - startSample;
+    const { sampleRate, numberOfChannels, duration } = buffer;
+    const startSample = Math.floor(startTime * sampleRate);
+    const endSample = Math.floor(Math.min(endTime, duration) * sampleRate);
+    const frameCount = endSample - startSample;
 
-  if (frameCount <= 0) {
-    throw new Error('Invalid slice parameters resulting in an empty audio buffer.');
-  }
+    if (frameCount <= 0) {
+        throw new Error('Invalid slice parameters resulting in an empty audio buffer.');
+    }
 
-  const newBuffer = audioCtx.createBuffer(numberOfChannels, frameCount, sampleRate);
-  for (let i = 0; i < numberOfChannels; i++) {
-    const channelData = buffer.getChannelData(i);
-    const newChannelData = newBuffer.getChannelData(i);
-    newChannelData.set(channelData.subarray(startSample, endSample));
-  }
-  return newBuffer;
+    const newBuffer = audioCtx.createBuffer(numberOfChannels, frameCount, sampleRate);
+    for (let i = 0; i < numberOfChannels; i++) {
+        const channelData = buffer.getChannelData(i);
+        const newChannelData = newBuffer.getChannelData(i);
+        newChannelData.set(channelData.subarray(startSample, endSample));
+    }
+    return newBuffer;
 };
 
 /**
@@ -214,7 +214,7 @@ export const analyzeScript = (script: string) => {
         else if (/\s/.test(char)) spaces++;
         else symbols++;
     }
-    
+
     const topWords = getFrequency(normalizedWords).slice(0, 5);
     const topBigrams = getFrequency(getNgrams(normalizedWords, 2)).slice(0, 5);
     const topTrigrams = getFrequency(getNgrams(normalizedWords, 3)).slice(0, 5);
@@ -226,30 +226,68 @@ export const analyzeScript = (script: string) => {
     };
 };
 
-export const splitTextIntoChunks = (text: string, maxLength: number): string[] => {
+export const splitTextIntoChunks = (text: string, maxLength: number, maxLines: number = 40): string[] => {
     if (maxLength <= 0) return [text];
-    const finalChunks: string[] = [];
-    const sentences = text.match(/[^.!?]+[.!?]*\s*|[^.!?]+$/g) || [];
 
-    for (const sentence of sentences) {
+    // Split into sentences or lines using a regex that keeps the delimiters
+    const rawSentences = text.match(/[^.!?\n]+[.!?\n]*\s*/g) || [text];
+    const finalChunks: string[] = [];
+    let currentChunk = "";
+    let currentLineCount = 0;
+
+    for (const sentence of rawSentences) {
         const trimmedSentence = sentence.trim();
         if (trimmedSentence.length === 0) continue;
-        if (trimmedSentence.length <= maxLength) {
-            finalChunks.push(trimmedSentence);
-        } else {
-            const words = trimmedSentence.split(' ');
-            let currentChunk = '';
+
+        // Count how many lines are in this sentence (usually 1, but could be more)
+        const linesInSentence = (sentence.match(/\n/g) || []).length || 1;
+
+        // If a single sentence is already longer than maxLength, we have to split it by words
+        if (trimmedSentence.length > maxLength) {
+            if (currentChunk.length > 0) {
+                finalChunks.push(currentChunk);
+                currentChunk = "";
+                currentLineCount = 0;
+            }
+
+            const words = trimmedSentence.split(/\s+/);
+            let wordBuffer = "";
             for (const word of words) {
-                if (currentChunk.length === 0) currentChunk = word;
-                else if (currentChunk.length + 1 + word.length <= maxLength) currentChunk += ' ' + word;
-                else {
-                    finalChunks.push(currentChunk);
-                    currentChunk = word;
+                const space = wordBuffer ? " " : "";
+                if ((wordBuffer + space + word).length <= maxLength) {
+                    wordBuffer += space + word;
+                } else {
+                    if (wordBuffer.length > 0) finalChunks.push(wordBuffer);
+                    wordBuffer = word;
                 }
             }
-            if (currentChunk.length > 0) finalChunks.push(currentChunk);
+            if (wordBuffer.length > 0) {
+                currentChunk = wordBuffer;
+                currentLineCount = 1; // Word buffers are treated as single line parts
+            }
+        } else {
+            // Check if adding this exceeds both length and line count limits
+            const separator = currentChunk ? "\n" : "";
+            const isLengthOk = (currentChunk + separator + trimmedSentence).length <= maxLength;
+            const isLinesOk = (currentLineCount + linesInSentence) <= maxLines;
+
+            if (isLengthOk && isLinesOk) {
+                currentChunk += separator + trimmedSentence;
+                currentLineCount += linesInSentence;
+            } else {
+                if (currentChunk.length > 0) {
+                    finalChunks.push(currentChunk);
+                }
+                currentChunk = trimmedSentence;
+                currentLineCount = linesInSentence;
+            }
         }
     }
+
+    if (currentChunk.length > 0) {
+        finalChunks.push(currentChunk);
+    }
+
     return finalChunks;
 };
 
@@ -288,7 +326,7 @@ export const parseSrt = (srtContent: string): SrtLine[] => {
 
         let timeLineIndex = -1;
         let timeMatch: RegExpMatchArray | null = null;
-        
+
         for (let i = 0; i < lines.length; i++) {
             const match = lines[i].match(timeRegex);
             if (match) {
@@ -306,14 +344,14 @@ export const parseSrt = (srtContent: string): SrtLine[] => {
         const text = textLines.join('\n').trim();
 
         if (text) {
-             const index = parsed.length + 1;
-             parsed.push({
+            const index = parsed.length + 1;
+            parsed.push({
                 id: `srt-${index}-${Date.now()}`,
                 index,
                 startTime,
                 endTime,
                 text,
-             });
+            });
         }
     }
     return parsed;
@@ -339,8 +377,8 @@ export const adjustSrtGaps = (lines: SrtLine[]): SrtLine[] => {
 
 export const stringifySrt = (lines: SrtLine[]): string => {
     return lines
-      .map((line, i) => `${i + 1}\n${line.startTime} --> ${line.endTime}\n${line.text}`)
-      .join('\n\n');
+        .map((line, i) => `${i + 1}\n${line.startTime} --> ${line.endTime}\n${line.text}`)
+        .join('\n\n');
 };
 
 const blobToBase64 = (blob: Blob): Promise<string> => {
@@ -371,54 +409,54 @@ export const audioBufferToWavBase64 = async (buffer: AudioBuffer): Promise<strin
 };
 
 export function spliceAudio(originalBuffer: AudioBuffer, editedLines: SrtLine[], originalLines: SrtLine[]): { newBuffer: AudioBuffer, newSrtLines: SrtLine[] } {
-  const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
-  const sampleRate = originalBuffer.sampleRate;
-  const oldData = originalBuffer.getChannelData(0);
+    const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+    const sampleRate = originalBuffer.sampleRate;
+    const oldData = originalBuffer.getChannelData(0);
 
-  // Filter out lines that don't have valid text or are deleted
-  const segmentsToKeep = editedLines.map(editedLine => {
-      // Use the Edited timestamps to define the cut from the original audio.
-      // This allows trimming silence or removing parts by adjusting the time in the editor.
-      const startTimeMs = srtTimeToMs(editedLine.startTime);
-      const endTimeMs = srtTimeToMs(editedLine.endTime);
-      
-      return {
-          startSample: Math.floor(Math.max(0, startTimeMs) / 1000 * sampleRate),
-          endSample: Math.floor(Math.min(originalBuffer.duration * 1000, endTimeMs) / 1000 * sampleRate),
-          editedLine: editedLine,
-      };
-  }).filter(seg => seg.endSample > seg.startSample);
+    // Filter out lines that don't have valid text or are deleted
+    const segmentsToKeep = editedLines.map(editedLine => {
+        // Use the Edited timestamps to define the cut from the original audio.
+        // This allows trimming silence or removing parts by adjusting the time in the editor.
+        const startTimeMs = srtTimeToMs(editedLine.startTime);
+        const endTimeMs = srtTimeToMs(editedLine.endTime);
 
-  let totalLength = 0;
-  for (const segment of segmentsToKeep) {
-      totalLength += (segment.endSample - segment.startSample);
-  }
+        return {
+            startSample: Math.floor(Math.max(0, startTimeMs) / 1000 * sampleRate),
+            endSample: Math.floor(Math.min(originalBuffer.duration * 1000, endTimeMs) / 1000 * sampleRate),
+            editedLine: editedLine,
+        };
+    }).filter(seg => seg.endSample > seg.startSample);
 
-  if (totalLength <= 0) throw new Error("편집 후 오디오가 비어 있습니다. 모든 텍스트가 삭제되었거나 타임코드가 유효하지 않습니다.");
+    let totalLength = 0;
+    for (const segment of segmentsToKeep) {
+        totalLength += (segment.endSample - segment.startSample);
+    }
 
-  const newBuffer = audioContext.createBuffer(1, totalLength, sampleRate);
-  const newData = newBuffer.getChannelData(0);
-  
-  let offset = 0;
-  const newSrtLines: SrtLine[] = [];
+    if (totalLength <= 0) throw new Error("편집 후 오디오가 비어 있습니다. 모든 텍스트가 삭제되었거나 타임코드가 유효하지 않습니다.");
 
-  for (const segment of segmentsToKeep) {
-      const chunk = oldData.subarray(segment.startSample, segment.endSample);
-      newData.set(chunk, offset);
+    const newBuffer = audioContext.createBuffer(1, totalLength, sampleRate);
+    const newData = newBuffer.getChannelData(0);
 
-      const newStartTimeMs = (offset / sampleRate) * 1000;
-      offset += chunk.length;
-      const newEndTimeMs = (offset / sampleRate) * 1000;
-      
-      newSrtLines.push({
-          ...segment.editedLine,
-          index: newSrtLines.length + 1,
-          startTime: msToSrtTime(newStartTimeMs),
-          endTime: msToSrtTime(newEndTimeMs),
-      });
-  }
+    let offset = 0;
+    const newSrtLines: SrtLine[] = [];
 
-  return { newBuffer, newSrtLines };
+    for (const segment of segmentsToKeep) {
+        const chunk = oldData.subarray(segment.startSample, segment.endSample);
+        newData.set(chunk, offset);
+
+        const newStartTimeMs = (offset / sampleRate) * 1000;
+        offset += chunk.length;
+        const newEndTimeMs = (offset / sampleRate) * 1000;
+
+        newSrtLines.push({
+            ...segment.editedLine,
+            index: newSrtLines.length + 1,
+            startTime: msToSrtTime(newStartTimeMs),
+            endTime: msToSrtTime(newEndTimeMs),
+        });
+    }
+
+    return { newBuffer, newSrtLines };
 }
 
 

@@ -2,9 +2,9 @@
 import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { ScriptLine, SrtLine, Voice, Preset } from '../types';
 import { AudioHistoryItem, MAX_CHAR_LIMIT, AutoFormatOptions } from '../App';
-import { 
-    ChartBarIcon, StopIcon, SparklesIcon, ListBulletIcon, PencilIcon, 
-    ClipboardIcon, DownloadIcon, LinkIcon, RefreshIcon, ScissorsIcon, 
+import {
+    ChartBarIcon, StopIcon, SparklesIcon, ListBulletIcon, PencilIcon,
+    ClipboardIcon, DownloadIcon, LinkIcon, RefreshIcon, ScissorsIcon,
     TrashIcon, XCircleIcon, PlusIcon, MinusIcon, StyleIcon, WrapTextIcon,
     ArrowsUpDownIcon, ArrowUpIcon, ArrowDownIcon, PlayIcon, ChevronLeftIcon, ChevronRightIcon, ClockIcon, StarIcon, FloppyDiskIcon
 } from '../constants';
@@ -25,7 +25,7 @@ export interface MainContentProps {
     isPreviewLoading: Record<string, boolean>;
     srtSplitCharCount: number;
     setSrtSplitCharCount: (count: number) => void;
-    
+
     // New Props for Advanced TTS
     selectedModel: string;
     setSelectedModel: (model: string) => void;
@@ -33,7 +33,7 @@ export interface MainContentProps {
     setStylePrompt: (prompt: string) => void;
     favorites: string[];
     toggleFavorite: (voiceId: string) => void;
-    
+
     presets: Preset[];
     onSavePreset: (name: string) => void;
     onDeletePreset: (id: string) => void;
@@ -121,7 +121,25 @@ const ScriptEditor: React.FC<ScriptEditorProps> = ({
 
     return (
         <div className="bg-gray-800 rounded-lg shadow-lg flex flex-col h-full border border-gray-700 overflow-hidden">
-             <div className="p-3 border-b border-gray-700 bg-gray-900/30 flex-shrink-0">
+            {/* Header Status Bar (Moved from bottom for better visibility) */}
+            <div className="flex-shrink-0 flex items-center justify-between p-3 bg-indigo-500/10 border-b border-indigo-500/20 text-xs">
+                <p className="text-gray-400">
+                    글자 수: <span className={`font-medium ${scriptAnalysis.charCount > MAX_CHAR_LIMIT ? 'text-red-500' : 'text-indigo-400'}`}>{scriptAnalysis.charCount.toLocaleString()}</span> / {MAX_CHAR_LIMIT.toLocaleString()}
+                    <span className="mx-2 text-gray-700">|</span>
+                    예상 시간: <span className="font-medium text-indigo-300">{(totalEstimatedTime / 60).toFixed(0)}분 {Math.round(totalEstimatedTime % 60)}초</span>
+                </p>
+                <div className="flex items-center gap-3">
+                    {isLoading && loadingStatus && (
+                        <div className="flex items-center gap-2 bg-indigo-500/10 px-2 py-1 rounded-full border border-indigo-500/30">
+                            <div className="w-2.5 h-2.5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin"></div>
+                            <p className="text-[11px] text-indigo-300 font-semibold animate-pulse">{loadingStatus}</p>
+                        </div>
+                    )}
+                    {error && <span className="text-xs text-red-400 bg-red-900/20 px-2 py-1 rounded border border-red-900/50 truncate max-w-[200px]" title={error}>{error}</span>}
+                </div>
+            </div>
+
+            <div className="p-3 border-b border-gray-700 bg-gray-900/30 flex-shrink-0">
                 <textarea
                     value={fullScript}
                     onChange={(e) => onScriptChange(e.target.value)}
@@ -136,7 +154,7 @@ const ScriptEditor: React.FC<ScriptEditorProps> = ({
                     </h3>
                 </div>
                 <div className="flex items-center gap-2 relative">
-                    <button 
+                    <button
                         onClick={() => setIsAutoFormatOpen(!isAutoFormatOpen)}
                         className="px-3 py-1.5 text-xs font-semibold text-gray-300 hover:text-white bg-gray-700 hover:bg-gray-600 rounded-md transition-colors flex items-center gap-1.5"
                         title="자동 줄바꿈 설정"
@@ -149,33 +167,33 @@ const ScriptEditor: React.FC<ScriptEditorProps> = ({
                             <h4 className="text-sm font-semibold text-gray-300 mb-2">자동 줄바꿈 기준</h4>
                             <div className="space-y-2">
                                 <label className="flex items-center space-x-2 text-sm text-gray-400 hover:text-gray-200 cursor-pointer">
-                                    <input type="checkbox" checked={autoFormatOptions.period} onChange={e => setAutoFormatOptions(prev => ({...prev, period: e.target.checked}))} className="rounded bg-gray-700 border-gray-600 text-indigo-500" />
+                                    <input type="checkbox" checked={autoFormatOptions.period} onChange={e => setAutoFormatOptions(prev => ({ ...prev, period: e.target.checked }))} className="rounded bg-gray-700 border-gray-600 text-indigo-500" />
                                     <span>마침표 (.)</span>
                                 </label>
                                 <label className="flex items-center space-x-2 text-sm text-gray-400 hover:text-gray-200 cursor-pointer">
-                                    <input type="checkbox" checked={autoFormatOptions.question} onChange={e => setAutoFormatOptions(prev => ({...prev, question: e.target.checked}))} className="rounded bg-gray-700 border-gray-600 text-indigo-500" />
+                                    <input type="checkbox" checked={autoFormatOptions.question} onChange={e => setAutoFormatOptions(prev => ({ ...prev, question: e.target.checked }))} className="rounded bg-gray-700 border-gray-600 text-indigo-500" />
                                     <span>물음표 (?)</span>
                                 </label>
                                 <label className="flex items-center space-x-2 text-sm text-gray-400 hover:text-gray-200 cursor-pointer">
-                                    <input type="checkbox" checked={autoFormatOptions.exclamation} onChange={e => setAutoFormatOptions(prev => ({...prev, exclamation: e.target.checked}))} className="rounded bg-gray-700 border-gray-600 text-indigo-500" />
+                                    <input type="checkbox" checked={autoFormatOptions.exclamation} onChange={e => setAutoFormatOptions(prev => ({ ...prev, exclamation: e.target.checked }))} className="rounded bg-gray-700 border-gray-600 text-indigo-500" />
                                     <span>느낌표 (!)</span>
                                 </label>
                                 <label className="flex items-center space-x-2 text-sm text-gray-400 hover:text-gray-200 cursor-pointer">
-                                    <input type="checkbox" checked={autoFormatOptions.comma} onChange={e => setAutoFormatOptions(prev => ({...prev, comma: e.target.checked}))} className="rounded bg-gray-700 border-gray-600 text-indigo-500" />
+                                    <input type="checkbox" checked={autoFormatOptions.comma} onChange={e => setAutoFormatOptions(prev => ({ ...prev, comma: e.target.checked }))} className="rounded bg-gray-700 border-gray-600 text-indigo-500" />
                                     <span>쉼표 (,)</span>
                                 </label>
                             </div>
                             <button onClick={handleAutoFormatApply} className="mt-3 w-full py-1.5 bg-indigo-600 hover:bg-indigo-700 text-white text-xs font-bold rounded">적용하기</button>
                         </div>
                     )}
-                    <button 
+                    <button
                         onClick={onRemoveEmptyScriptLines}
                         className="p-1.5 text-gray-400 hover:text-white bg-gray-700 hover:bg-gray-600 rounded-md transition-colors"
                         title="빈 줄 제거"
                     >
                         <MinusIcon className="w-4 h-4" />
                     </button>
-                    <button 
+                    <button
                         onClick={onAddScriptLine}
                         className="p-1.5 text-gray-400 hover:text-white bg-gray-700 hover:bg-gray-600 rounded-md transition-colors"
                         title="줄 추가"
@@ -184,7 +202,7 @@ const ScriptEditor: React.FC<ScriptEditorProps> = ({
                     </button>
                 </div>
             </div>
-            
+
             <div className="flex-grow overflow-y-auto p-2 space-y-1 custom-scrollbar">
                 {scriptLines.map((line, index) => (
                     <div key={line.id} className="group flex items-start gap-2 bg-gray-900/30 hover:bg-gray-900/50 p-2 rounded-md transition-colors border border-transparent hover:border-gray-700/50">
@@ -202,8 +220,8 @@ const ScriptEditor: React.FC<ScriptEditorProps> = ({
                         <div className="flex-grow">
                             <div className="flex items-center gap-2 mb-1">
                                 <div className="relative group/style">
-                                     <select 
-                                        value={line.style || ''} 
+                                    <select
+                                        value={line.style || ''}
                                         onChange={(e) => onUpdateScriptLine(line.id, { style: e.target.value })}
                                         className="appearance-none bg-gray-800 text-xs text-gray-300 border border-gray-700 rounded px-2 py-0.5 pr-6 focus:outline-none focus:border-indigo-500 cursor-pointer hover:bg-gray-700"
                                     >
@@ -242,7 +260,7 @@ const ScriptEditor: React.FC<ScriptEditorProps> = ({
                                 rows={1}
                             />
                         </div>
-                        <button 
+                        <button
                             onClick={() => onRemoveScriptLine(line.id)}
                             className="p-1 text-gray-600 hover:text-red-500 opacity-0 group-hover:opacity-100 transition-opacity"
                         >
@@ -252,22 +270,7 @@ const ScriptEditor: React.FC<ScriptEditorProps> = ({
                 ))}
             </div>
 
-            {/* Footer moved inside the box */}
-            <div className="flex-shrink-0 flex items-center justify-between p-3 bg-gray-900/50 border-t border-gray-700 text-xs">
-                <p className="text-gray-400">
-                    글자 수: <span className={`font-medium ${scriptAnalysis.charCount > MAX_CHAR_LIMIT ? 'text-red-500' : 'text-gray-300'}`}>{scriptAnalysis.charCount.toLocaleString()}</span> / {MAX_CHAR_LIMIT.toLocaleString()}
-                    <span className="mx-2">|</span>
-                    예상 시간: <span className="font-medium text-gray-300">{(totalEstimatedTime / 60).toFixed(0)}분 {Math.round(totalEstimatedTime % 60)}초</span>
-                </p>
-                    {isLoading && loadingStatus && (
-                    <div className="flex items-center gap-2">
-                            <div className="w-3 h-3 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
-                            <p className="text-xs text-indigo-400 animate-pulse">{loadingStatus}</p>
-                    </div>
-                )}
-                {error && <span className="text-xs text-red-400 ml-2 truncate max-w-[150px]" title={error}>{error}</span>}
-            </div>
-        </div>
+        </div >
     );
 };
 
@@ -276,12 +279,12 @@ export const MainContent: React.FC<MainContentProps> = ({
     srtSplitCharCount, setSrtSplitCharCount,
     // New Props
     selectedModel, setSelectedModel, stylePrompt, setStylePrompt, favorites, toggleFavorite,
-    
+
     presets, onSavePreset, onDeletePreset, onLoadPreset,
-    
+
     isLoading,
     loadingStatus,
-    error, 
+    error,
     audioHistory,
     srtContent,
     activeSrtLineId,
@@ -293,16 +296,16 @@ export const MainContent: React.FC<MainContentProps> = ({
     onActiveAudioChange,
     scriptLines,
     onScriptChange,
-    onUpdateScriptLine, 
+    onUpdateScriptLine,
     onRemoveScriptLine,
     onAddScriptLine,
     onRemoveEmptyScriptLines,
     onAutoFormatScript,
     onMergeScriptLine,
     onSplitScriptLine,
-    onRegenerateSrt, 
-    onDetectSilence, 
-    silentSegments, 
+    onRegenerateSrt,
+    onDetectSilence,
+    silentSegments,
     onRemoveSilenceSegments,
     scriptAnalysis,
     totalEstimatedTime,
@@ -325,10 +328,10 @@ export const MainContent: React.FC<MainContentProps> = ({
     const [isAutoplayOnClickEnabled, setIsAutoplayOnClickEnabled] = useState(false);
     const [isPresetSaveOpen, setIsPresetSaveOpen] = useState(false);
     const [presetName, setPresetName] = useState('');
-    
+
     // Pagination state
     const [currentPage, setCurrentPage] = useState(1);
-    
+
     const srtTableBodyRef = useRef<HTMLTableSectionElement>(null);
     const activeRowRef = useRef<HTMLTableRowElement>(null);
     const audioPlayerRef = useRef<AudioPlayerHandle>(null);
@@ -339,19 +342,19 @@ export const MainContent: React.FC<MainContentProps> = ({
     useEffect(() => {
         setLocalSplitCount(srtSplitCharCount.toString());
     }, [srtSplitCharCount]);
-    
+
     // Reset page to 1 (latest) when new audio is generated.
     // Use the ID of the first item to detect new insertions at the top.
     useEffect(() => {
         if (audioHistory.length > 0) {
             setCurrentPage(1);
         }
-    }, [audioHistory[0]?.id]); 
+    }, [audioHistory[0]?.id]);
 
     // Calculate current audio item and sync active audio state
     const currentAudioItem = audioHistory.length > 0 ? audioHistory[currentPage - 1] : null;
     const totalPages = audioHistory.length;
-    
+
     useEffect(() => {
         if (currentAudioItem) {
             onActiveAudioChange(currentAudioItem.id);
@@ -386,11 +389,11 @@ export const MainContent: React.FC<MainContentProps> = ({
             e.currentTarget.blur();
         }
     };
-    
+
     const handleSpeedChange = (newSpeed: number) => {
         setSpeechSpeed(Math.max(0.5, Math.min(2.0, Number(newSpeed.toFixed(1)))));
     };
-    
+
     const handleSavePresetClick = () => {
         if (presetName.trim()) {
             onSavePreset(presetName.trim());
@@ -406,7 +409,7 @@ export const MainContent: React.FC<MainContentProps> = ({
                 const target = e.target as HTMLElement;
                 const tagName = target.tagName;
                 const isInput = tagName === 'INPUT' || tagName === 'TEXTAREA' || target.isContentEditable;
-                
+
                 // Only toggle play if focus is NOT on an input/textarea
                 if (!isInput) {
                     e.preventDefault(); // Prevent scrolling
@@ -437,7 +440,7 @@ export const MainContent: React.FC<MainContentProps> = ({
     const handleSrtLineClick = (line: SrtLine) => {
         const startTimeSec = srtTimeToMs(line.startTime) / 1000;
         audioPlayerRef.current?.seekTo(startTimeSec);
-        
+
         // Manually set active line on click so it highlights even if auto-scroll (tracking) is off
         setActiveSrtLineId(line.id);
 
@@ -448,7 +451,7 @@ export const MainContent: React.FC<MainContentProps> = ({
             audioPlayerRef.current?.pause();
         }
     };
-    
+
     // Only allow AudioPlayer to update the active line if auto-scroll (tracking) is enabled
     const handlePlayerActiveLineUpdate = useCallback((id: string | null) => {
         if (isAutoScrollEnabled) {
@@ -514,17 +517,17 @@ export const MainContent: React.FC<MainContentProps> = ({
 
         startMs = Math.max(0, startMs);
         endMs = Math.max(0, endMs);
-        
+
         if (endMs < startMs) {
             endMs = startMs;
         }
-        
+
         onUpdateSrtLine(lineId, {
             startTime: msToSrtTime(startMs),
             endTime: msToSrtTime(endMs),
         });
     };
-    
+
     // Calculate height for responsiveness (viewport height - header/padding approx)
     // Adjust this value if header size changes
     const contentHeightStyle = { height: 'calc(100vh - 220px)' };
@@ -538,12 +541,12 @@ export const MainContent: React.FC<MainContentProps> = ({
                     <div className="flex flex-col gap-4 h-full min-h-0">
                         {/* Voice Selection & Controls Block */}
                         <div className="bg-gray-800 p-4 rounded-lg shadow border border-gray-700 flex flex-col gap-4 shrink-0">
-                            
+
                             {/* 0. Preset Bar */}
                             <div className="flex items-center justify-between border-b border-gray-700 pb-3 mb-1">
                                 <div className="flex items-center gap-2 flex-grow max-w-sm">
                                     <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider whitespace-nowrap">프리셋:</label>
-                                    <select 
+                                    <select
                                         className="bg-gray-700 text-xs text-white border border-gray-600 rounded py-1 px-2 flex-grow focus:outline-none focus:ring-1 focus:ring-indigo-500"
                                         onChange={(e) => {
                                             if (e.target.value) onLoadPreset(e.target.value);
@@ -556,7 +559,7 @@ export const MainContent: React.FC<MainContentProps> = ({
                                         ))}
                                     </select>
                                     {presets.length > 0 && (
-                                        <button 
+                                        <button
                                             onClick={() => {
                                                 const select = document.querySelector('select') as HTMLSelectElement; // Should target specific select better but works for now in context
                                                 // Actually we can't easily get the selected ID without state for dropdown value. 
@@ -573,8 +576,8 @@ export const MainContent: React.FC<MainContentProps> = ({
                                 <div className="flex items-center gap-2 relative">
                                     {isPresetSaveOpen ? (
                                         <div className="flex items-center gap-2 absolute right-0 bg-gray-800 border border-gray-600 p-1 rounded shadow-xl z-20">
-                                            <input 
-                                                type="text" 
+                                            <input
+                                                type="text"
                                                 value={presetName}
                                                 onChange={(e) => setPresetName(e.target.value)}
                                                 placeholder="프리셋 이름"
@@ -586,7 +589,7 @@ export const MainContent: React.FC<MainContentProps> = ({
                                             <button onClick={() => setIsPresetSaveOpen(false)} className="text-xs bg-gray-600 text-white px-2 py-1 rounded hover:bg-gray-500">취소</button>
                                         </div>
                                     ) : (
-                                        <button 
+                                        <button
                                             onClick={() => setIsPresetSaveOpen(true)}
                                             className="flex items-center gap-1.5 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 px-2 py-1 rounded border border-gray-600 transition-colors"
                                             title="현재 설정(모델, 음성, 스타일)을 저장합니다"
@@ -598,33 +601,45 @@ export const MainContent: React.FC<MainContentProps> = ({
                                 </div>
                             </div>
 
-                             {/* 1. Model Selection (Flash vs Pro) */}
+                            {/* 1. Model Selection (Flash vs Pro vs Native) */}
                             <div className="flex flex-col gap-2">
                                 <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">모델 선택</label>
-                                <div className="flex gap-2">
-                                    <label className={`flex-1 flex items-center justify-center gap-2 p-2.5 rounded-md border cursor-pointer transition-all ${selectedModel === 'gemini-2.5-flash-preview-tts' ? 'bg-indigo-900/50 border-indigo-500 text-indigo-200' : 'bg-gray-700/50 border-gray-600 text-gray-400 hover:bg-gray-700'}`}>
-                                        <input 
-                                            type="radio" 
-                                            name="model" 
-                                            value="gemini-2.5-flash-preview-tts" 
-                                            checked={selectedModel === 'gemini-2.5-flash-preview-tts'} 
+                                <div className="flex flex-wrap gap-2">
+                                    <label className={`flex-1 min-w-[120px] flex items-center justify-center gap-2 p-2.5 rounded-md border cursor-pointer transition-all ${selectedModel === 'gemini-2.5-flash-preview-tts' ? 'bg-indigo-900/50 border-indigo-500 text-indigo-200' : 'bg-gray-700/50 border-gray-600 text-gray-400 hover:bg-gray-700'}`}>
+                                        <input
+                                            type="radio"
+                                            name="model"
+                                            value="gemini-2.5-flash-preview-tts"
+                                            checked={selectedModel === 'gemini-2.5-flash-preview-tts'}
                                             onChange={(e) => setSelectedModel(e.target.value)}
                                             className="hidden"
                                         />
-                                        <span className="text-sm font-medium">Gemini 2.5 Flash</span>
+                                        <span className="text-sm font-medium">Flash TTS</span>
                                         <span className="text-[10px] bg-green-900/50 text-green-300 px-1.5 py-0.5 rounded border border-green-700">빠름</span>
                                     </label>
-                                    <label className={`flex-1 flex items-center justify-center gap-2 p-2.5 rounded-md border cursor-pointer transition-all ${selectedModel === 'gemini-2.5-pro-preview-02-05' ? 'bg-purple-900/50 border-purple-500 text-purple-200' : 'bg-gray-700/50 border-gray-600 text-gray-400 hover:bg-gray-700'}`}>
-                                        <input 
-                                            type="radio" 
-                                            name="model" 
-                                            value="gemini-2.5-pro-preview-02-05" 
-                                            checked={selectedModel === 'gemini-2.5-pro-preview-02-05'} 
+                                    <label className={`flex-1 min-w-[120px] flex items-center justify-center gap-2 p-2.5 rounded-md border cursor-pointer transition-all ${selectedModel === 'gemini-2.5-pro-preview-tts' ? 'bg-purple-900/50 border-purple-500 text-purple-200' : 'bg-gray-700/50 border-gray-600 text-gray-400 hover:bg-gray-700'}`}>
+                                        <input
+                                            type="radio"
+                                            name="model"
+                                            value="gemini-2.5-pro-preview-tts"
+                                            checked={selectedModel === 'gemini-2.5-pro-preview-tts'}
                                             onChange={(e) => setSelectedModel(e.target.value)}
                                             className="hidden"
                                         />
-                                        <span className="text-sm font-medium">Gemini 2.5 Pro</span>
+                                        <span className="text-sm font-medium">Pro TTS</span>
                                         <span className="text-[10px] bg-yellow-900/50 text-yellow-300 px-1.5 py-0.5 rounded border border-yellow-700">고품질</span>
+                                    </label>
+                                    <label className={`flex-1 min-w-[120px] flex items-center justify-center gap-2 p-2.5 rounded-md border cursor-pointer transition-all ${selectedModel === 'gemini-2.5-flash-native-audio-dialog-preview' ? 'bg-emerald-900/50 border-emerald-500 text-emerald-200' : 'bg-gray-700/50 border-gray-600 text-gray-400 hover:bg-gray-700'}`}>
+                                        <input
+                                            type="radio"
+                                            name="model"
+                                            value="gemini-2.5-flash-native-audio-dialog-preview"
+                                            checked={selectedModel === 'gemini-2.5-flash-native-audio-dialog-preview'}
+                                            onChange={(e) => setSelectedModel(e.target.value)}
+                                            className="hidden"
+                                        />
+                                        <span className="text-sm font-medium">Native Audio</span>
+                                        <span className="text-[10px] bg-emerald-700/30 text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-700">무제한</span>
                                     </label>
                                 </div>
                             </div>
@@ -676,18 +691,18 @@ export const MainContent: React.FC<MainContentProps> = ({
                                         className="p-2 bg-indigo-600 text-white rounded-md hover:bg-indigo-700 disabled:bg-gray-500 disabled:cursor-not-allowed flex-shrink-0"
                                         aria-label={`음성 미리듣기`}
                                     >
-                                        {isPreviewLoading[singleSpeakerVoice] ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div> : <PlayIcon className="w-5 h-5"/>}
+                                        {isPreviewLoading[singleSpeakerVoice] ? <div className="w-5 h-5 border-2 border-white border-t-transparent rounded-full animate-spin"></div> : <PlayIcon className="w-5 h-5" />}
                                     </button>
                                 </div>
                             </div>
-                            
+
                             {/* 3. Director's Notes */}
                             <div className="flex flex-col gap-2 pt-2 border-t border-gray-700">
                                 <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider flex items-center justify-between">
                                     스타일/감정 설정 (Director's Notes)
                                     <span className="text-[10px] font-normal text-gray-500 normal-case">예: 차분하고 신뢰감 있는 뉴스 앵커 톤으로</span>
                                 </label>
-                                <textarea 
+                                <textarea
                                     value={stylePrompt}
                                     onChange={(e) => setStylePrompt(e.target.value)}
                                     placeholder="AI에게 목소리 톤, 감정, 분위기를 구체적으로 지시하세요."
@@ -712,21 +727,21 @@ export const MainContent: React.FC<MainContentProps> = ({
                                     />
                                 </div>
                                 <div className="flex gap-2">
-                                    <button 
+                                    <button
                                         onClick={() => setIsAnalysisPanelOpen(prev => !prev)}
                                         className="flex items-center gap-2 bg-gray-700 text-white text-xs font-semibold py-2 px-3 rounded-md hover:bg-gray-600 transition-colors"
                                     >
                                         <ChartBarIcon className="w-4 h-4" />
                                         <span>분석</span>
                                     </button>
-                                    
+
                                     {isLoading ? (
                                         <button onClick={onStopGeneration} className="flex items-center justify-center gap-2 bg-red-600 text-white text-xs font-semibold py-2 px-3 rounded-md hover:bg-red-700 transition-colors">
                                             <StopIcon className="w-4 h-4" />
                                             <span>중지</span>
                                         </button>
                                     ) : (
-                                        <button 
+                                        <button
                                             onClick={onGenerateAudio}
                                             disabled={!singleSpeakerVoice || scriptLines.every(l => !l.text.trim())}
                                             className="flex items-center justify-center gap-2 bg-indigo-600 text-white text-xs font-bold py-2 px-3 rounded-md hover:bg-indigo-700 disabled:bg-gray-600 disabled:cursor-not-allowed transition-colors"
@@ -741,8 +756,8 @@ export const MainContent: React.FC<MainContentProps> = ({
 
                         {/* Script Editor expands to fill space */}
                         <div className="flex-grow min-h-0">
-                            <ScriptEditor 
-                                scriptLines={scriptLines} 
+                            <ScriptEditor
+                                scriptLines={scriptLines}
                                 onScriptChange={onScriptChange}
                                 onUpdateScriptLine={onUpdateScriptLine}
                                 onRemoveScriptLine={onRemoveScriptLine}
@@ -762,10 +777,10 @@ export const MainContent: React.FC<MainContentProps> = ({
 
                     {/* RIGHT COLUMN: Results Area */}
                     <div className="flex flex-col gap-6 min-w-0 h-full">
-                         {/* Pagination Controls */}
-                         {audioHistory.length > 1 && (
+                        {/* Pagination Controls */}
+                        {audioHistory.length > 1 && (
                             <div className="flex justify-center items-center gap-4 bg-gray-800 p-2 rounded-lg border border-gray-700">
-                                <button 
+                                <button
                                     onClick={() => setCurrentPage(Math.max(1, currentPage - 1))}
                                     disabled={currentPage === 1}
                                     className="p-1 rounded-md hover:bg-gray-700 disabled:opacity-30 disabled:hover:bg-transparent"
@@ -776,7 +791,7 @@ export const MainContent: React.FC<MainContentProps> = ({
                                 <span className="text-sm font-semibold text-gray-300">
                                     {currentPage} / {totalPages}
                                 </span>
-                                <button 
+                                <button
                                     onClick={() => setCurrentPage(Math.min(totalPages, currentPage + 1))}
                                     disabled={currentPage === totalPages}
                                     className="p-1 rounded-md hover:bg-gray-700 disabled:opacity-30 disabled:hover:bg-transparent"
@@ -807,7 +822,7 @@ export const MainContent: React.FC<MainContentProps> = ({
                         )}
 
                         {(isLoading && loadingStatus.includes('자막')) ? (
-                            <div className="flex-grow bg-gray-800 rounded-lg shadow-inner flex flex-col items-center justify-center border border-gray-700/50">
+                            <div className="flex-grow bg-gray-800 rounded-lg shadow-inner flex flex-col items-center justify-start pt-16 border border-gray-700/50">
                                 <div className="relative w-20 h-20 mb-6">
                                     <div className="absolute top-0 left-0 w-full h-full border-4 border-indigo-500/30 rounded-full"></div>
                                     <div className="absolute top-0 left-0 w-full h-full border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
@@ -817,7 +832,7 @@ export const MainContent: React.FC<MainContentProps> = ({
                                 </div>
                                 <h3 className="text-xl font-bold text-white mb-2 animate-pulse">{loadingStatus}</h3>
                                 <p className="text-gray-400 text-sm max-w-md text-center leading-relaxed">
-                                    AI가 오디오 파형을 분석하여 타임코드를 생성하고 있습니다.<br/>
+                                    AI가 오디오 파형을 분석하여 타임코드를 생성하고 있습니다.<br />
                                     잠시만 기다려주세요...
                                 </p>
                                 <div className="flex gap-2 mt-6">
@@ -840,12 +855,12 @@ export const MainContent: React.FC<MainContentProps> = ({
                                     <div className="flex items-center gap-4">
                                         {srtMode === 'chapter' && (
                                             <label className="flex items-center text-sm text-gray-300 cursor-pointer">
-                                                <input type="checkbox" checked={isAutoplayOnClickEnabled} onChange={(e) => setIsAutoplayOnClickEnabled(e.target.checked)} className="mr-2 bg-gray-700 border-gray-600 rounded text-indigo-500 focus:ring-indigo-600"/>
+                                                <input type="checkbox" checked={isAutoplayOnClickEnabled} onChange={(e) => setIsAutoplayOnClickEnabled(e.target.checked)} className="mr-2 bg-gray-700 border-gray-600 rounded text-indigo-500 focus:ring-indigo-600" />
                                                 클릭 시 자동 재생
                                             </label>
                                         )}
                                         <label className="flex items-center text-sm text-gray-300 cursor-pointer">
-                                            <input type="checkbox" checked={isAutoScrollEnabled} onChange={(e) => setIsAutoScrollEnabled(e.target.checked)} className="mr-2 bg-gray-700 border-gray-600 rounded text-indigo-500 focus:ring-indigo-600"/>
+                                            <input type="checkbox" checked={isAutoScrollEnabled} onChange={(e) => setIsAutoScrollEnabled(e.target.checked)} className="mr-2 bg-gray-700 border-gray-600 rounded text-indigo-500 focus:ring-indigo-600" />
                                             자동 스크롤
                                         </label>
                                         <button onClick={handleCopySrt} title="SRT 복사" className="p-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded-md"><ClipboardIcon className="w-5 h-5" /></button>
@@ -873,86 +888,86 @@ export const MainContent: React.FC<MainContentProps> = ({
                                         </div>
                                     </div>
                                 )}
-                                
+
                                 {/* Flexible height container */}
                                 <div className="flex-grow overflow-y-auto border-t border-gray-700 custom-scrollbar">
-                                <table className="w-full text-left text-sm">
-                                    <thead className="bg-gray-700 text-xs text-gray-400 uppercase sticky top-0 z-10">
-                                        <tr>
-                                            <th className="py-2 px-4 w-12">#</th>
-                                            {srtMode === 'edit' && <th className="py-2 px-2 w-28 text-center">시간 조정</th>}
-                                            <th className="py-2 px-4 w-32">시작 <span className="font-mono text-gray-500">(hh:mm:ss,ms)</span></th>
-                                            <th className="py-2 px-4 w-32">종료 <span className="font-mono text-gray-500">(hh:mm:ss,ms)</span></th>
-                                            <th className="py-2 px-4">내용</th>
-                                            {srtMode === 'edit' && <th className="py-2 px-4 w-12"></th>}
-                                        </tr>
-                                    </thead>
-                                    <tbody ref={srtTableBodyRef}>
-                                        {editableSrtLines.map((line, index) => (
-                                            <tr 
-                                                key={line.id} 
-                                                ref={line.id === activeSrtLineId ? activeRowRef : null}
-                                                onClick={() => handleSrtLineClick(line)}
-                                                className={`border-b border-gray-700/60 transition-colors ${line.id === activeSrtLineId ? 'bg-indigo-900/40' : 'hover:bg-gray-700/40'} ${srtMode === 'chapter' ? 'cursor-pointer' : ''}`}
-                                            >
-                                                <td className="px-4 py-2 text-gray-400 align-top">{index + 1}</td>
-                                                {srtMode === 'edit' && (
-                                                    <td className="px-2 py-2 font-mono align-top text-center">
-                                                        <div className="flex items-center justify-center gap-1">
-                                                            <button onClick={(e) => { e.stopPropagation(); handleIndividualTimeShift(line.id, -100); }} className="px-1.5 py-1 text-xs bg-gray-700 rounded-md hover:bg-gray-600" title="-100ms">-100ms</button>
-                                                            <button onClick={(e) => { e.stopPropagation(); handleIndividualTimeShift(line.id, 100); }} className="px-1.5 py-1 text-xs bg-gray-700 rounded-md hover:bg-gray-600" title="+100ms">+100ms</button>
-                                                        </div>
-                                                    </td>
-                                                )}
-                                                <td className="px-4 py-2 font-mono align-top">
-                                                    {srtMode === 'edit' ? (
-                                                        <input 
-                                                            type="text" 
-                                                            value={line.startTime} 
-                                                            onChange={(e) => onUpdateSrtLine(line.id, { startTime: e.target.value })}
-                                                            onMouseDown={(e) => handleTimeDragStart(e, line.id, 'startTime')}
-                                                            className="w-full bg-gray-800 p-1 rounded-md border border-transparent focus:border-indigo-500 focus:bg-gray-900 outline-none cursor-ew-resize"
-                                                        />
-                                                    ) : ( <div>{line.startTime}</div> )}
-                                                </td>
-                                                <td className="px-4 py-2 font-mono align-top">
-                                                    {srtMode === 'edit' ? (
-                                                        <input 
-                                                            type="text" 
-                                                            value={line.endTime} 
-                                                            onChange={(e) => onUpdateSrtLine(line.id, { endTime: e.target.value })}
-                                                            onMouseDown={(e) => handleTimeDragStart(e, line.id, 'endTime')}
-                                                            className="w-full bg-gray-800 p-1 rounded-md border border-transparent focus:border-indigo-500 focus:bg-gray-900 outline-none cursor-ew-resize"
-                                                        />
-                                                    ) : ( <div>{line.endTime}</div> )}
-                                                </td>
-                                                <td className="px-4 py-2 align-top leading-relaxed">
-                                                    {srtMode === 'edit' ? (
-                                                        <textarea
-                                                            value={line.text}
-                                                            onChange={(e) => onUpdateSrtLine(line.id, { text: e.target.value })}
-                                                            onKeyDown={(e) => {
-                                                                if (e.key === 'Enter' && !e.shiftKey) {
-                                                                    e.preventDefault();
-                                                                    onSplitSrtLine(index, e.currentTarget.selectionStart);
-                                                                }
-                                                            }}
-                                                            className="w-full bg-gray-800 p-1 rounded-md border border-transparent focus:border-indigo-500 focus:bg-gray-900 outline-none resize-none"
-                                                            rows={line.text.split('\n').length || 1}
-                                                        />
-                                                    ) : ( <div className="whitespace-pre-wrap">{line.text}</div> )}
-                                                </td>
-                                                {srtMode === 'edit' && (
-                                                    <td className="px-4 py-2 text-center align-top">
-                                                        <button onClick={(e) => { e.stopPropagation(); onRemoveSrtLine(line.id); }} className="text-gray-500 hover:text-red-500">
-                                                            <TrashIcon className="w-5 h-5"/>
-                                                        </button>
-                                                    </td>
-                                                )}
+                                    <table className="w-full text-left text-sm">
+                                        <thead className="bg-gray-700 text-xs text-gray-400 uppercase sticky top-0 z-10">
+                                            <tr>
+                                                <th className="py-2 px-4 w-12">#</th>
+                                                {srtMode === 'edit' && <th className="py-2 px-2 w-28 text-center">시간 조정</th>}
+                                                <th className="py-2 px-4 w-32">시작 <span className="font-mono text-gray-500">(hh:mm:ss,ms)</span></th>
+                                                <th className="py-2 px-4 w-32">종료 <span className="font-mono text-gray-500">(hh:mm:ss,ms)</span></th>
+                                                <th className="py-2 px-4">내용</th>
+                                                {srtMode === 'edit' && <th className="py-2 px-4 w-12"></th>}
                                             </tr>
-                                        ))}
-                                    </tbody>
-                                </table>
+                                        </thead>
+                                        <tbody ref={srtTableBodyRef}>
+                                            {editableSrtLines.map((line, index) => (
+                                                <tr
+                                                    key={line.id}
+                                                    ref={line.id === activeSrtLineId ? activeRowRef : null}
+                                                    onClick={() => handleSrtLineClick(line)}
+                                                    className={`border-b border-gray-700/60 transition-colors ${line.id === activeSrtLineId ? 'bg-indigo-900/40' : 'hover:bg-gray-700/40'} ${srtMode === 'chapter' ? 'cursor-pointer' : ''}`}
+                                                >
+                                                    <td className="px-4 py-2 text-gray-400 align-top">{index + 1}</td>
+                                                    {srtMode === 'edit' && (
+                                                        <td className="px-2 py-2 font-mono align-top text-center">
+                                                            <div className="flex items-center justify-center gap-1">
+                                                                <button onClick={(e) => { e.stopPropagation(); handleIndividualTimeShift(line.id, -100); }} className="px-1.5 py-1 text-xs bg-gray-700 rounded-md hover:bg-gray-600" title="-100ms">-100ms</button>
+                                                                <button onClick={(e) => { e.stopPropagation(); handleIndividualTimeShift(line.id, 100); }} className="px-1.5 py-1 text-xs bg-gray-700 rounded-md hover:bg-gray-600" title="+100ms">+100ms</button>
+                                                            </div>
+                                                        </td>
+                                                    )}
+                                                    <td className="px-4 py-2 font-mono align-top">
+                                                        {srtMode === 'edit' ? (
+                                                            <input
+                                                                type="text"
+                                                                value={line.startTime}
+                                                                onChange={(e) => onUpdateSrtLine(line.id, { startTime: e.target.value })}
+                                                                onMouseDown={(e) => handleTimeDragStart(e, line.id, 'startTime')}
+                                                                className="w-full bg-gray-800 p-1 rounded-md border border-transparent focus:border-indigo-500 focus:bg-gray-900 outline-none cursor-ew-resize"
+                                                            />
+                                                        ) : (<div>{line.startTime}</div>)}
+                                                    </td>
+                                                    <td className="px-4 py-2 font-mono align-top">
+                                                        {srtMode === 'edit' ? (
+                                                            <input
+                                                                type="text"
+                                                                value={line.endTime}
+                                                                onChange={(e) => onUpdateSrtLine(line.id, { endTime: e.target.value })}
+                                                                onMouseDown={(e) => handleTimeDragStart(e, line.id, 'endTime')}
+                                                                className="w-full bg-gray-800 p-1 rounded-md border border-transparent focus:border-indigo-500 focus:bg-gray-900 outline-none cursor-ew-resize"
+                                                            />
+                                                        ) : (<div>{line.endTime}</div>)}
+                                                    </td>
+                                                    <td className="px-4 py-2 align-top leading-relaxed">
+                                                        {srtMode === 'edit' ? (
+                                                            <textarea
+                                                                value={line.text}
+                                                                onChange={(e) => onUpdateSrtLine(line.id, { text: e.target.value })}
+                                                                onKeyDown={(e) => {
+                                                                    if (e.key === 'Enter' && !e.shiftKey) {
+                                                                        e.preventDefault();
+                                                                        onSplitSrtLine(index, e.currentTarget.selectionStart);
+                                                                    }
+                                                                }}
+                                                                className="w-full bg-gray-800 p-1 rounded-md border border-transparent focus:border-indigo-500 focus:bg-gray-900 outline-none resize-none"
+                                                                rows={line.text.split('\n').length || 1}
+                                                            />
+                                                        ) : (<div className="whitespace-pre-wrap">{line.text}</div>)}
+                                                    </td>
+                                                    {srtMode === 'edit' && (
+                                                        <td className="px-4 py-2 text-center align-top">
+                                                            <button onClick={(e) => { e.stopPropagation(); onRemoveSrtLine(line.id); }} className="text-gray-500 hover:text-red-500">
+                                                                <TrashIcon className="w-5 h-5" />
+                                                            </button>
+                                                        </td>
+                                                    )}
+                                                </tr>
+                                            ))}
+                                        </tbody>
+                                    </table>
                                 </div>
                             </div>
                         )}
@@ -962,7 +977,7 @@ export const MainContent: React.FC<MainContentProps> = ({
 
             <aside className={`lg:col-span-3 h-full min-h-0 transition-all duration-300 ${isAnalysisPanelOpen ? 'block' : 'hidden'}`}>
                 <div className="relative h-full">
-                     <button 
+                    <button
                         onClick={() => setIsAnalysisPanelOpen(false)}
                         className="absolute top-3 right-3 p-1 text-gray-400 hover:text-white z-10 bg-gray-900/50 rounded-full hover:bg-gray-700"
                         aria-label="분석 패널 닫기"

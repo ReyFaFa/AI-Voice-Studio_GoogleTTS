@@ -2,7 +2,7 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { ScriptLine, SrtLine, Preset } from './types';
 import { VOICES, LANGUAGES, XCircleIcon, SettingsIcon, MicrophoneIcon, DocumentTextIcon } from './constants';
-import { generateSingleSpeakerAudio, previewVoice, transcribeAudioWithSrt, setApiKey } from './services/geminiService';
+import { generateSingleSpeakerAudio, generateAudioWithLiveAPIMultiTurn, generateSrtFromLineTimings, uint8ArrayToBase64, previewVoice, transcribeAudioWithSrt, setApiKey } from './services/geminiService';
 import { MainContent } from './components/MainContent';
 import { SubtitleGenerator } from './components/SubtitleGenerator';
 import {
@@ -48,11 +48,13 @@ export interface AutoFormatOptions {
 
 export const MAX_CHAR_LIMIT = 100000; // Expanded to support chunked processing
 
+const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
 export function App() {
     const [activeTab, setActiveTab] = useState<'tts' | 'subtitles'>('tts');
 
     const [singleSpeakerVoice, setSingleSpeakerVoice] = useState<string>('');
-    const [speechSpeed, setSpeechSpeed] = useState<number>(1.0);
+    const [speechSpeed, setSpeechSpeed] = useState<number>(0.8);
     const [scriptLines, setScriptLines] = useState<ScriptLine[]>([]);
 
     // Advanced TTS Settings (Persistent)
@@ -388,6 +390,7 @@ export function App() {
             return;
         }
         if (!singleSpeakerVoice) {
+            alert("음성을 선택해주세요. 좌측 설정에서 목소리를 선택한 후 다시 시도해주세요.");
             setError("음성을 선택해주세요.");
             return;
         }
@@ -396,124 +399,204 @@ export function App() {
         setLoadingStatus('대본 분석 및 분할 중...');
         setError(null);
         abortControllerRef.current = new AbortController();
-
+        const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
         try {
-            // Step 1: Intelligent Chunking (approx 2500 characters per request for stability)
-            const SAFE_CHUNK_SIZE = 2500;
-            const textChunks = splitTextIntoChunks(fullText, SAFE_CHUNK_SIZE);
-            const totalChunks = textChunks.length;
+            // Dual-Limit Strategy: 1800 chars OR 40 lines, whichever comes first.
+            // This prevents AI from hallucinating or collapsing many short lines.
+            const isNativeAudio = selectedModel.includes('native-audio-dialog');
 
-            let mergedAudioBuffer: AudioBuffer | null = null;
-            const allParsedSrt: SrtLine[] = [];
-            let currentTimeOffsetMs = 0;
-            const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)();
+            if (isNativeAudio) {
+                // --- NEW STRATEGY: Single-Session Multi-Turn ---
+                console.log("[App] Using Single-Session Multi-Turn Strategy for Native Audio.");
+                setLoadingStatus('멀티 턴 정밀 낭독 세션 시작 중...');
 
-            for (let i = 0; i < totalChunks; i++) {
-                const chunkText = textChunks[i];
+                const lines = fullText.split('\n').filter(l => l.trim().length > 0);
 
-                try {
-                    console.log(`[Chunk Loop] Starting chunk ${i + 1}/${totalChunks}...`);
-                    setLoadingStatus(`오디오 생성 중 (${i + 1}/${totalChunks})...`);
+                const result = await generateAudioWithLiveAPIMultiTurn(
+                    lines,
+                    singleSpeakerVoice,
+                    stylePrompt,
+                    speechSpeed, // Pass the speed correctly
+                    500, // 500ms silence between lines
+                    abortControllerRef.current.signal
+                );
 
-                    // Step 2: Generate Audio for this chunk
-                    const base64Pcm = await generateSingleSpeakerAudio(
-                        chunkText,
-                        singleSpeakerVoice,
-                        selectedModel,
-                        speechSpeed,
-                        stylePrompt,
-                        abortControllerRef.current.signal
-                    );
+                setLoadingStatus('오디오 및 자막 데이터 처리 중...');
 
-                    setLoadingStatus(`오디오 처리 중 (${i + 1}/${totalChunks})...`);
-                    const chunkBlob = createWavBlobFromBase64Pcm(base64Pcm);
-                    const chunkBuffer = await audioContext.decodeAudioData(await chunkBlob.arrayBuffer());
+                const uint8Pcm = new Uint8Array(result.audioBuffer);
+                const base64Pcm = uint8ArrayToBase64(uint8Pcm);
+                const finalWavBlob = createWavBlobFromBase64Pcm(base64Pcm);
+                const finalUrl = URL.createObjectURL(finalWavBlob);
 
-                    // Step 3: Transcribe this chunk
-                    setLoadingStatus(`자막 생성 중 (${i + 1}/${totalChunks})...`);
-                    const chunkWavBase64 = await audioBufferToWavBase64(chunkBuffer);
-                    const chunkSrt = await transcribeAudioWithSrt(
-                        chunkWavBase64,
-                        srtSplitCharCount,
-                        abortControllerRef.current.signal,
-                        chunkText
-                    );
+                // --- KEY CHANGE: Generate SRT directly from original lines + calculated timings ---
+                const srtText = generateSrtFromLineTimings(lines, result.lineTimings);
+                const finalSrtLines = parseSrt(srtText);
 
-                    const parsedChunkSrt = parseSrt(chunkSrt);
+                const mergedAudioBuffer = await audioContext.decodeAudioData(await finalWavBlob.arrayBuffer());
 
-                    // Step 4: Apply time offset to SRT and collect
-                    parsedChunkSrt.forEach(line => {
-                        const shiftedStartMs = srtTimeToMs(line.startTime) + currentTimeOffsetMs;
-                        const shiftedEndMs = srtTimeToMs(line.endTime) + currentTimeOffsetMs;
-                        allParsedSrt.push({
-                            ...line,
-                            startTime: msToSrtTime(shiftedStartMs),
-                            endTime: msToSrtTime(shiftedEndMs)
-                        });
-                    });
+                const newItem: AudioHistoryItem = {
+                    id: `audio-${Date.now()}`,
+                    src: finalUrl,
+                    scriptChunk: fullText,
+                    audioBuffer: mergedAudioBuffer,
+                    isTrimmed: false,
+                    contextDuration: 0,
+                    status: 'full',
+                    srtLines: finalSrtLines,
+                    originalSrtLines: JSON.parse(JSON.stringify(finalSrtLines)),
+                };
 
-                    // Step 5: Merge Audio Buffers
-                    if (!mergedAudioBuffer) {
-                        mergedAudioBuffer = chunkBuffer;
-                    } else {
-                        const combined = audioContext.createBuffer(
-                            mergedAudioBuffer.numberOfChannels,
-                            mergedAudioBuffer.length + chunkBuffer.length,
-                            mergedAudioBuffer.sampleRate
-                        );
-                        for (let channel = 0; channel < mergedAudioBuffer.numberOfChannels; channel++) {
-                            const combinedData = combined.getChannelData(channel);
-                            combinedData.set(mergedAudioBuffer.getChannelData(channel), 0);
-                            combinedData.set(chunkBuffer.getChannelData(channel), mergedAudioBuffer.length);
+                setTtsResult(prev => ({
+                    audioHistory: [newItem, ...prev.audioHistory],
+                    srtContent: srtText
+                }));
+
+                setActiveAudioId(newItem.id);
+                setEditableSrtLines(finalSrtLines);
+                setOriginalSrtLines(JSON.parse(JSON.stringify(finalSrtLines)));
+                setHasTimestampEdits(false);
+
+            } else {
+                // --- LEGACY STRATEGY: Standard Chunk-based TTS + Transcription ---
+                const textChunks = splitTextIntoChunks(fullText, 1800, 40);
+                const totalChunks = textChunks.length;
+
+                let mergedAudioBuffer: AudioBuffer | null = null;
+                const allParsedSrt: SrtLine[] = [];
+                let currentTimeOffsetMs = 0;
+
+                for (let i = 0; i < totalChunks; i++) {
+                    const chunkText = textChunks[i];
+
+                    try {
+                        // Add a small delay between requests to avoid 429 Too Many Requests
+                        if (i > 0) {
+                            await sleep(5000);
                         }
-                        mergedAudioBuffer = combined;
-                    }
 
-                    currentTimeOffsetMs += (chunkBuffer.duration * 1000);
-                    console.log(`[Chunk Loop] Successfully finished chunk ${i + 1}/${totalChunks}.`);
+                        console.log(`[Chunk Loop] Starting chunk ${i + 1}/${totalChunks}...`);
+                        setLoadingStatus(`오디오 생성 중 (${i + 1}/${totalChunks})...`);
 
-                } catch (chunkError) {
-                    console.error(`[Chunk Loop] Error in chunk ${i + 1}:`, chunkError);
-                    if (i === 0) {
-                        // Fail if the very first chunk fails
-                        throw chunkError;
-                    } else {
-                        // Partial success: Break loop and process what we have so far
-                        console.warn(`[Chunk Loop] Partial success. Proceeding with first ${i} chunks.`);
+                        // Step 2: Generate Audio for this chunk
+                        const base64Pcm = await generateSingleSpeakerAudio(
+                            chunkText,
+                            singleSpeakerVoice,
+                            selectedModel,
+                            speechSpeed,
+                            stylePrompt,
+                            abortControllerRef.current.signal
+                        );
+
+                        setLoadingStatus(`오디오 처리 중 (${i + 1}/${totalChunks})...`);
+                        const chunkBlob = createWavBlobFromBase64Pcm(base64Pcm);
+                        const chunkBuffer = await audioContext.decodeAudioData(await chunkBlob.arrayBuffer());
+
+                        // Step 3: Transcribe this chunk (with automatic retry)
+                        setLoadingStatus(`자막 생성 중 (${i + 1}/${totalChunks})...`);
+                        const chunkWavBase64 = await audioBufferToWavBase64(chunkBuffer);
+
+                        let chunkSrt = "";
+                        let parsedChunkSrt: SrtLine[] = [];
+                        let retryCount = 0;
+                        const maxRetries = 1;
+
+                        while (retryCount <= maxRetries) {
+                            try {
+                                const currentRetryContext = retryCount > 0 ? "\n[경고]: 이전 시도에서 줄 수 불일치로 검증 실패했습니다. 이번에는 절대 줄을 합치지 말고 1:1로만 생성하세요." : "";
+                                chunkSrt = await transcribeAudioWithSrt(
+                                    chunkWavBase64,
+                                    srtSplitCharCount,
+                                    abortControllerRef.current.signal,
+                                    chunkText + currentRetryContext,
+                                    speechSpeed
+                                );
+                                parsedChunkSrt = parseSrt(chunkSrt);
+
+                                const inputLines = chunkText.split('\n').filter(line => line.trim().length > 0);
+                                if (parsedChunkSrt.length === inputLines.length) {
+                                    break;
+                                } else if (retryCount < maxRetries) {
+                                    console.warn(`[Verification Retry] Chunk ${i + 1}: Expected ${inputLines.length}, got ${parsedChunkSrt.length}. Retrying...`);
+                                    retryCount++;
+                                    continue;
+                                } else {
+                                    throw new Error(`${i + 1}번째 구간 검증 최종 실패: 대본은 ${inputLines.length}줄인데 자막은 ${parsedChunkSrt.length}줄만 생성되었습니다.`);
+                                }
+                            } catch (err: any) {
+                                if (retryCount >= maxRetries) throw err;
+                                retryCount++;
+                                await sleep(1000);
+                            }
+                        }
+
+                        // Step 4: Apply time offset to SRT and collect
+                        parsedChunkSrt.forEach(line => {
+                            const shiftedStartMs = srtTimeToMs(line.startTime) + currentTimeOffsetMs;
+                            const shiftedEndMs = srtTimeToMs(line.endTime) + currentTimeOffsetMs;
+                            allParsedSrt.push({
+                                ...line,
+                                startTime: msToSrtTime(shiftedStartMs),
+                                endTime: msToSrtTime(shiftedEndMs)
+                            });
+                        });
+
+                        // Step 5: Merge Audio Buffers
+                        if (!mergedAudioBuffer) {
+                            mergedAudioBuffer = chunkBuffer;
+                        } else {
+                            const combined = audioContext.createBuffer(
+                                mergedAudioBuffer.numberOfChannels,
+                                mergedAudioBuffer.length + chunkBuffer.length,
+                                mergedAudioBuffer.sampleRate
+                            );
+                            for (let channel = 0; channel < mergedAudioBuffer.numberOfChannels; channel++) {
+                                const combinedData = combined.getChannelData(channel);
+                                combinedData.set(mergedAudioBuffer.getChannelData(channel), 0);
+                                combinedData.set(chunkBuffer.getChannelData(channel), mergedAudioBuffer.length);
+                            }
+                            mergedAudioBuffer = combined;
+                        }
+
+                        currentTimeOffsetMs += (chunkBuffer.duration * 1000);
+                        console.log(`[Chunk Loop] Successfully finished chunk ${i + 1}/${totalChunks}.`);
+
+                    } catch (chunkError) {
+                        console.error(`[Chunk Loop] Error in chunk ${i + 1}:`, chunkError);
+                        if (i === 0) throw chunkError;
                         setError(`${i + 1}번째 구간에서 오류가 발생했습니다. 현재까지 생성된 부분(${i}개 구간)만 가져옵니다.`);
                         break;
                     }
                 }
+
+                if (!mergedAudioBuffer) throw new Error("오디오 생성 결과가 비어있습니다.");
+
+                setLoadingStatus('최종 결과 정리 중...');
+                const adjustedSrt = adjustSrtGaps(allParsedSrt);
+                const finalWavBlob = encodeAudioBufferToWavBlob(mergedAudioBuffer);
+                const finalUrl = URL.createObjectURL(finalWavBlob);
+
+                const newItem: AudioHistoryItem = {
+                    id: `audio-${Date.now()}`,
+                    src: finalUrl,
+                    scriptChunk: fullText,
+                    audioBuffer: mergedAudioBuffer,
+                    isTrimmed: false,
+                    contextDuration: 0,
+                    status: 'full',
+                    srtLines: adjustedSrt,
+                    originalSrtLines: JSON.parse(JSON.stringify(adjustedSrt)),
+                };
+
+                setTtsResult(prev => ({
+                    audioHistory: [newItem, ...prev.audioHistory],
+                    srtContent: stringifySrt(adjustedSrt)
+                }));
+
+                setActiveAudioId(newItem.id);
+                setEditableSrtLines(adjustedSrt);
+                setOriginalSrtLines(JSON.parse(JSON.stringify(adjustedSrt)));
+                setHasTimestampEdits(false);
             }
-
-            if (!mergedAudioBuffer) throw new Error("오디오 생성 결과가 비어있습니다.");
-
-            setLoadingStatus('최종 결과 정리 중...');
-            const adjustedSrt = adjustSrtGaps(allParsedSrt);
-            const finalWavBlob = encodeAudioBufferToWavBlob(mergedAudioBuffer);
-            const finalUrl = URL.createObjectURL(finalWavBlob);
-
-            const newItem: AudioHistoryItem = {
-                id: `audio-${Date.now()}`,
-                src: finalUrl,
-                scriptChunk: fullText,
-                audioBuffer: mergedAudioBuffer,
-                isTrimmed: false,
-                contextDuration: 0,
-                status: 'full',
-                srtLines: adjustedSrt,
-                originalSrtLines: JSON.parse(JSON.stringify(adjustedSrt)),
-            };
-
-            setTtsResult(prev => ({
-                audioHistory: [newItem, ...prev.audioHistory],
-                srtContent: stringifySrt(adjustedSrt)
-            }));
-
-            setActiveAudioId(newItem.id);
-            setEditableSrtLines(adjustedSrt);
-            setOriginalSrtLines(JSON.parse(JSON.stringify(adjustedSrt)));
-            setHasTimestampEdits(false);
 
         } catch (e) {
             if (e instanceof Error && e.name === 'AbortError') {
