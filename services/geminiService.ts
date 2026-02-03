@@ -4,21 +4,21 @@ import { GoogleGenAI, Modality, GenerateContentResponse } from "@google/genai";
 let ai: GoogleGenAI | null = null;
 
 export const setApiKey = (apiKey: string) => {
-    if (!apiKey) return;
-    try {
-        ai = new GoogleGenAI({ apiKey });
-    } catch (e) {
-        console.error("Failed to set API Key:", e);
-    }
+  if (!apiKey) return;
+  try {
+    ai = new GoogleGenAI({ apiKey });
+  } catch (e) {
+    console.error("Failed to set API Key:", e);
+  }
 };
 
 // Initialize Logic: Prioritize LocalStorage (User entered), then Env (Build time)
 const storedKey = typeof localStorage !== 'undefined' ? localStorage.getItem('gemini_api_key') : null;
 
 if (storedKey) {
-    setApiKey(storedKey);
+  setApiKey(storedKey);
 } else if (process.env.API_KEY) {
-    setApiKey(process.env.API_KEY);
+  setApiKey(process.env.API_KEY);
 }
 
 // Models are now dynamic, but we keep this as a fallback/reference or for Flash.
@@ -49,12 +49,12 @@ interface SpeechConfig {
  */
 function handleApiError(error: any): Error {
   const message = error instanceof Error ? error.message : String(error);
-  
+
   // 429 Too Many Requests 또는 Quota 관련 키워드 체크
   if (message.includes('429') || message.toLowerCase().includes('quota') || message.toLowerCase().includes('limit')) {
     return new Error("API 사용량이 초과되었습니다. 무료 버전의 한도에 도달했으므로 1~5분 정도 기다린 후 다시 시도해주세요. 혹은 우측 상단 설정을 통해 개인 API 키를 등록하세요.");
   }
-  
+
   // 401/403 관련 (인증 에러)
   if (message.includes('401') || message.includes('403')) {
     return new Error("API 키가 유효하지 않거나 권한이 없습니다. 설정을 확인해주세요.");
@@ -69,24 +69,24 @@ function handleApiError(error: any): Error {
 }
 
 async function _generateAudio(
-    prompt: string, 
-    modelName: string, 
-    speechConfig: SpeechConfig, 
-    speed: number, 
-    stylePrompt?: string, 
-    signal?: AbortSignal
+  prompt: string,
+  modelName: string,
+  speechConfig: SpeechConfig,
+  speed: number,
+  stylePrompt?: string,
+  signal?: AbortSignal
 ): Promise<string> {
   if (!ai) {
     throw new Error("API 키가 설정되지 않았습니다. 우측 상단 설정 아이콘을 눌러 API 키를 입력해주세요.");
   }
-  
+
   try {
     const config: {
-        responseModalities: Modality[];
-        speechConfig: SpeechConfig;
+      responseModalities: Modality[];
+      speechConfig: SpeechConfig;
     } = {
-        responseModalities: [Modality.AUDIO],
-        speechConfig: speechConfig,
+      responseModalities: [Modality.AUDIO],
+      speechConfig: speechConfig,
     };
 
     // Construct the prompt with instructions for steerability
@@ -95,17 +95,17 @@ async function _generateAudio(
 
     // 1. Add Style Instructions if present
     if (stylePrompt && stylePrompt.trim().length > 0) {
-        instructions.push(`Style/Tone: ${stylePrompt.trim()}`);
+      instructions.push(`Style/Tone: ${stylePrompt.trim()}`);
     }
 
     // 2. Add Speed Instructions if not normal
     if (speed !== 1.0) {
-        instructions.push(`Speed: ${speed}x`);
+      instructions.push(`Speed: ${speed}x`);
     }
 
     // 3. Combine Instructions and Script
     if (instructions.length > 0) {
-        finalPrompt = `[Instructions]\n${instructions.join('\n')}\n\n[Text to Read]\n${prompt}`;
+      finalPrompt = `[Instructions]\n${instructions.join('\n')}\n\n[Text to Read]\n${prompt}`;
     }
 
     // Use the passed modelName
@@ -113,6 +113,13 @@ async function _generateAudio(
       model: modelName,
       contents: [{ parts: [{ text: finalPrompt }] }],
       config: config,
+      safetySettings: [
+        { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_NONE' },
+        { category: 'HARM_CATEGORY_HATE_SPEECH', threshold: 'BLOCK_NONE' },
+        { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT', threshold: 'BLOCK_NONE' },
+        { category: 'HARM_CATEGORY_DANGEROUS_CONTENT', threshold: 'BLOCK_NONE' },
+        { category: 'HARM_CATEGORY_CIVIC_INTEGRITY', threshold: 'BLOCK_NONE' },
+      ]
     });
 
     const audioPart = response.candidates?.[0]?.content?.parts.find(part => part.inlineData);
@@ -120,7 +127,14 @@ async function _generateAudio(
 
     if (!data) {
       console.error("API response did not contain audio data:", response);
-      throw new Error('오디오 생성에 실패했습니다. AI의 응답이 불완전합니다.');
+      if (response.candidates?.[0]?.finishReason === 'SAFETY') {
+        throw new Error('오디오 생성 중 안전 필터에 의해 콘텐츠가 차단되었습니다. 텍스트 내용을 확인해주세요.');
+      }
+      if (response.candidates?.[0]?.content?.parts?.[0]?.text) {
+        console.warn("Model responded with text instead of audio:", response.candidates[0].content.parts[0].text);
+        throw new Error('AI가 오디오 대신 텍스트로 응답했습니다. 프롬프트 지시어 충돌이 의심됩니다.');
+      }
+      throw new Error('오디오 생성에 실패했습니다. AI의 응답이 불완전하거나 비어있습니다.');
     }
 
     return data;
@@ -134,36 +148,36 @@ async function _generateAudio(
 }
 
 export const generateSingleSpeakerAudio = (
-    prompt: string, 
-    voiceName: string, 
-    modelName: string, 
-    speed: number = 1.0, 
-    stylePrompt?: string, 
-    signal?: AbortSignal
+  prompt: string,
+  voiceName: string,
+  modelName: string,
+  speed: number = 1.0,
+  stylePrompt?: string,
+  signal?: AbortSignal
 ): Promise<string> => {
-    const speechConfig: SpeechConfig = {
-        voiceConfig: {
-            prebuiltVoiceConfig: {
-                voiceName: voiceName,
-            },
-        },
-        languageCode: 'ko-KR',
-    };
-    return _generateAudio(prompt, modelName, speechConfig, speed, stylePrompt, signal);
+  const speechConfig: SpeechConfig = {
+    voiceConfig: {
+      prebuiltVoiceConfig: {
+        voiceName: voiceName,
+      },
+    },
+    languageCode: 'ko-KR',
+  };
+  return _generateAudio(prompt, modelName, speechConfig, speed, stylePrompt, signal);
 };
 
 export const previewVoice = (voiceName: string): Promise<string> => {
   const sampleText = `안녕하세요, 이것은 제 목소리입니다. 이 목소리로 멋진 오디오 콘텐츠를 만들 수 있습니다.`;
   // Use default Flash model for previews to save cost/latency
-  const defaultModel = "gemini-2.5-flash-preview-tts"; 
+  const defaultModel = "gemini-2.5-flash-preview-tts";
   return generateSingleSpeakerAudio(sampleText, voiceName, defaultModel, 1.0);
 };
 
 export const transcribeAudioWithSrt = async (
-    base64Wav: string, 
-    splitCharCount: number, 
-    signal?: AbortSignal,
-    referenceText?: string
+  base64Wav: string,
+  splitCharCount: number,
+  signal?: AbortSignal,
+  referenceText?: string
 ): Promise<string> => {
   if (!ai) {
     throw new Error("API 키가 설정되지 않았습니다. 우측 상단 설정 아이콘을 눌러 API 키를 입력해주세요.");
@@ -186,7 +200,7 @@ export const transcribeAudioWithSrt = async (
 3. **출력:** 코드 블록(\`\`\`srt) 안에 SRT 내용만 출력하세요. 사족은 금지합니다.`;
 
     if (referenceText) {
-        promptText += `
+      promptText += `
 
 **[모드: 강제 정렬 (Forced Alignment)]**
 제공된 **참조 스크립트**가 이 오디오의 정확한 대본(정답지)입니다.
@@ -209,7 +223,7 @@ export const transcribeAudioWithSrt = async (
 **[참조 스크립트]:**
 ${referenceText}`;
     } else {
-        promptText += `
+      promptText += `
 
 **[모드: 일반 전사 (Transcription)]**
 1. 오디오를 듣고 내용을 정확하게 한국어로 받아쓰세요.
@@ -237,17 +251,17 @@ ${referenceText}`;
       model: transcriptionModelName,
       contents: { parts: [audioPart, textPart] },
     });
-    
+
     let srtText = response.text?.trim() ?? '';
     const match = srtText.match(/```(?:srt)?\s*([\s\S]*?)```/);
     if (match && match[1]) {
-        srtText = match[1].trim();
+      srtText = match[1].trim();
     }
 
     return srtText;
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
-        throw error;
+      throw error;
     }
     console.error("Error transcribing audio with Gemini API:", error);
     throw handleApiError(error);
