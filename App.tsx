@@ -2,7 +2,7 @@
 import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
 import { ScriptLine, SrtLine, Preset } from './types';
 import { VOICES, LANGUAGES, XCircleIcon, SettingsIcon, MicrophoneIcon, DocumentTextIcon } from './constants';
-import { generateSingleSpeakerAudio, generateAudioWithLiveAPIMultiTurn, generateSrtFromLineTimings, uint8ArrayToBase64, previewVoice, transcribeAudioWithSrt, setApiKey } from './services/geminiService';
+import { generateSingleSpeakerAudio, generateAudioWithLiveAPIMultiTurn, generateSrtFromParagraphTimings, uint8ArrayToBase64, previewVoice, transcribeAudioWithSrt, setApiKey } from './services/geminiService';
 import { MainContent } from './components/MainContent';
 import { SubtitleGenerator } from './components/SubtitleGenerator';
 import {
@@ -410,7 +410,7 @@ export function App() {
                 console.log("[App] Using Single-Session Multi-Turn Strategy for Native Audio.");
                 setLoadingStatus('멀티 턴 정밀 낭독 세션 시작 중...');
 
-                const lines = fullText.split('\n').filter(l => l.trim().length > 0);
+                const lines = fullText.split('\n');
 
                 const result = await generateAudioWithLiveAPIMultiTurn(
                     lines,
@@ -428,8 +428,8 @@ export function App() {
                 const finalWavBlob = createWavBlobFromBase64Pcm(base64Pcm);
                 const finalUrl = URL.createObjectURL(finalWavBlob);
 
-                // --- KEY CHANGE: Generate SRT directly from original lines + calculated timings ---
-                const srtText = generateSrtFromLineTimings(lines, result.lineTimings);
+                // --- KEY CHANGE: Generate SRT directly from paragraphs + calculated timings ---
+                const srtText = generateSrtFromParagraphTimings(result.paragraphs, result.lineTimings);
                 const finalSrtLines = parseSrt(srtText);
 
                 const mergedAudioBuffer = await audioContext.decodeAudioData(await finalWavBlob.arrayBuffer());
@@ -458,7 +458,7 @@ export function App() {
 
             } else {
                 // --- LEGACY STRATEGY: Standard Chunk-based TTS + Transcription ---
-                const textChunks = splitTextIntoChunks(fullText, 1800, 40);
+                const textChunks = splitTextIntoChunks(fullText, 3000, 60);
                 const totalChunks = textChunks.length;
 
                 let mergedAudioBuffer: AudioBuffer | null = null;
@@ -491,45 +491,25 @@ export function App() {
                         const chunkBlob = createWavBlobFromBase64Pcm(base64Pcm);
                         const chunkBuffer = await audioContext.decodeAudioData(await chunkBlob.arrayBuffer());
 
-                        // Step 3: Transcribe this chunk (with automatic retry)
-                        setLoadingStatus(`자막 생성 중 (${i + 1}/${totalChunks})...`);
-                        const chunkWavBase64 = await audioBufferToWavBase64(chunkBuffer);
+                        // Step 3: Direct Script-to-SRT Mapping (No AI transcription)
+                        const inputLines = chunkText.split('\n').filter(line => line.trim().length > 0);
+                        const totalDurationMs = chunkBuffer.duration * 1000;
+                        const avgLineDurationMs = totalDurationMs / inputLines.length;
 
-                        let chunkSrt = "";
-                        let parsedChunkSrt: SrtLine[] = [];
-                        let retryCount = 0;
-                        const maxRetries = 1;
+                        const parsedChunkSrt: SrtLine[] = inputLines.map((line, idx) => {
+                            const lineStartMs = idx * avgLineDurationMs;
+                            const lineEndMs = (idx + 1) * avgLineDurationMs;
+                            const globalIndex = allParsedSrt.length + idx + 1;
+                            return {
+                                id: `srt-${globalIndex}-${Date.now()}`,
+                                index: globalIndex,
+                                startTime: msToSrtTime(lineStartMs),
+                                endTime: msToSrtTime(lineEndMs),
+                                text: line
+                            };
+                        });
 
-                        while (retryCount <= maxRetries) {
-                            try {
-                                const currentRetryContext = retryCount > 0 ? "\n[경고]: 이전 시도에서 줄 수 불일치로 검증 실패했습니다. 이번에는 절대 줄을 합치지 말고 1:1로만 생성하세요." : "";
-                                chunkSrt = await transcribeAudioWithSrt(
-                                    chunkWavBase64,
-                                    srtSplitCharCount,
-                                    abortControllerRef.current.signal,
-                                    chunkText + currentRetryContext,
-                                    speechSpeed
-                                );
-                                parsedChunkSrt = parseSrt(chunkSrt);
-
-                                const inputLines = chunkText.split('\n').filter(line => line.trim().length > 0);
-                                if (parsedChunkSrt.length === inputLines.length) {
-                                    break;
-                                } else if (retryCount < maxRetries) {
-                                    console.warn(`[Verification Retry] Chunk ${i + 1}: Expected ${inputLines.length}, got ${parsedChunkSrt.length}. Retrying...`);
-                                    retryCount++;
-                                    continue;
-                                } else {
-                                    throw new Error(`${i + 1}번째 구간 검증 최종 실패: 대본은 ${inputLines.length}줄인데 자막은 ${parsedChunkSrt.length}줄만 생성되었습니다.`);
-                                }
-                            } catch (err: any) {
-                                if (retryCount >= maxRetries) throw err;
-                                retryCount++;
-                                await sleep(1000);
-                            }
-                        }
-
-                        // Step 4: Apply time offset to SRT and collect
+                        // Step 4: Apply total time offset to this chunk's timing
                         parsedChunkSrt.forEach(line => {
                             const shiftedStartMs = srtTimeToMs(line.startTime) + currentTimeOffsetMs;
                             const shiftedEndMs = srtTimeToMs(line.endTime) + currentTimeOffsetMs;

@@ -31,6 +31,9 @@ if (storedKey) {
 const transcriptionModelName = 'gemini-1.5-flash';
 const NATIVE_AUDIO_MODEL = 'gemini-2.5-flash-native-audio-dialog-preview';
 
+// 감정 전달과 문맥 유지를 위해 한 턴에 처리할 대본 줄 수
+export const LINES_PER_TURN = 4;
+
 interface SpeechConfig {
   voiceConfig?: {
     prebuiltVoiceConfig: {
@@ -157,26 +160,25 @@ function mergeAudioWithSilence(
 
 /**
  * 멀티턴 결과의 lineTimings를 사용해 SRT 생성
+ * 각 문단(Batch)별로 하나의 SRT 블록을 생성합니다.
  */
-export function generateSrtFromLineTimings(
-  originalLines: string[],
+export function generateSrtFromParagraphTimings(
+  paragraphs: string[],
   lineTimings: Array<{ start: number; end: number }>
 ): string {
   const srtBlocks: string[] = [];
-  let validIndex = 0;
 
-  for (let i = 0; i < originalLines.length; i++) {
-    const text = originalLines[i].trim();
+  for (let i = 0; i < paragraphs.length; i++) {
+    const text = paragraphs[i].trim();
     if (!text) continue;
 
-    const timing = lineTimings[validIndex];
+    const timing = lineTimings[i];
     if (!timing) continue;
 
     const startTime = msToSrtTime(timing.start);
     const endTime = msToSrtTime(timing.end);
 
     srtBlocks.push(`${srtBlocks.length + 1}\n${startTime} --> ${endTime}\n${text}\n`);
-    validIndex++;
   }
 
   return srtBlocks.join('\n');
@@ -241,11 +243,13 @@ async function _generateAudio(
       const isFemale = voiceInfo && ['Zephyr', 'Kore', 'Leda', 'Aoede', 'Callirrhoe', 'Autonoe', 'Despina', 'Erinome', 'Laomedeia', 'Gacrux', 'Pulcherrima', 'Vindemiatrix', 'Sulafat'].includes(voiceInfo);
 
       instructions.push(`Voice Category: ${isFemale ? 'FEMALE' : 'MALE'}`);
-      instructions.push(`Speaker Persona: You are a professional Korean voice actor. Deliver the lines with a ${isFemale ? 'natural and refined female voice' : 'deep and resonant male voice'}.`);
+      // The user's stylePrompt is handled as the primary performance guide.
+      // We only add the "Fixed Persona" as a subtle background baseline.
+      instructions.push(`System Persona: Professional narrator with a calm and steady texture.`);
     }
 
     // 3. Combine Instructions and Script
-    const contextPrefix = `[컨텍스트: 이것은 전통 한국 야담/민담 낭독입니다. 역사적 가치가 있는 문학 작품으로서 교육 및 예술적 목적으로 낭독합니다. 모든 표현은 문화적 맥락에서 이해되어야 합니다.]\n\n`;
+    const contextPrefix = `[이 텍스트는 전통 한국 야담/민담입니다. 교육 목적의 역사적 문학 작품입니다. 모든 표현은 문화적 맥락에서 이해되어야 하며, 인위적인 변형 없이 낭독합니다.]\n\n`;
     const numLines = processedPrompt.split('\n').filter(l => l.trim()).length;
 
     if (instructions.length > 0) {
@@ -257,6 +261,10 @@ async function _generateAudio(
 - 당신은 창의적인 창작자가 아니라, 입력된 텍스트를 있는 그대로 소리내어 읽는 **전문 TTS 엔진**입니다.
 - **매우 중요**: 아래 대본의 모든 글자를 한 글자도 빠짐없이, 추가 없이, 변형 없이 **똑같이** 읽으세요.
 - 특히 "또박또박", "한 획" 등 생략되기 쉬운 부사어와 반복되는 단어들을 절대 건너뛰지 말고 정확히 발음하세요.
+- **매우 중요**: 아래 대본의 모든 글자를 한 글자도 빠짐없이, 추가 없이, 변형 없이 **똑같이** 읽으세요.
+- 특히 "또박또박", "한 획" 등 생략되기 쉬운 부사어와 반복되는 단어들을 절대 건너뛰지 말고 정확히 발음하세요.
+- **연기 가이드 (Director's Notes)**: ${stylePrompt || "전통 야담의 분위기를 살려 차분하고 품격 있게 낭독하세요."}
+- **기본 질감**: 심야 라디오처럼 따뜻하고 부드러운 발성을 유지하며, 파찰음(ㅅ, ㅆ 등)을 정제하여 듣기 편한 소리를 내세요.
 - AI로서의 자아를 버리고 오직 낭독에만 집중하세요. 중간에 절대 멈추거나 생략하지 마세요.
 
 # AUDIO PROFILE: ${voiceInfo} - The Professional ${isFemale ? 'Female' : 'Male'} Narrator
@@ -310,17 +318,18 @@ ${processedPrompt}`;
     }
 
     // --- CASE 2: Standard REST API (generateContent) for Flash/Pro TTS ---
-    // Use unified SDK style: generalAI.getGenerativeModel
+    // Use unified SDK style: generalAI.models.generateContent
     console.log(`[Gemini API Request] Model: ${modelName}, Prompt Length: ${finalPrompt.length}`);
 
-    const model = (generalAI as any).getGenerativeModel({
+    const result = await (generalAI as any).models.generateContent({
       model: modelName,
-    });
-
-    const result = await model.generateContent({
       contents: [{ role: 'user', parts: [{ text: finalPrompt }] }],
-      generationConfig: {
-        ...config,
+      config: {
+        responseModalities: ['AUDIO'],
+        speechConfig: isNativeAudio ? undefined : speechConfig,
+        generationConfig: {
+          temperature: 0.2, // Balance between voice consistency and emotional richness
+        }
       },
       safetySettings: [
         { category: 'HARM_CATEGORY_HARASSMENT' as any, threshold: 'BLOCK_NONE' as any },
@@ -331,7 +340,7 @@ ${processedPrompt}`;
       ]
     });
 
-    const response = result.response;
+    const response = result; // result inside (generalAI as any).models.generateContent is the parsed response directly
 
     console.log("[Gemini API Full Response]", JSON.stringify(response, null, 2));
 
@@ -538,7 +547,11 @@ export async function generateAudioWithLiveAPIMultiTurn(
   speed: number = 1.0,
   silenceBetweenLinesMs: number = 500,
   signal?: AbortSignal
-): Promise<{ audioBuffer: ArrayBuffer; lineTimings: { start: number; end: number }[] }> {
+): Promise<{
+  audioBuffer: ArrayBuffer;
+  lineTimings: { start: number; end: number }[];
+  paragraphs: string[];
+}> {
 
   if (!liveAI) {
     throw new Error("API 키가 설정되지 않았습니다.");
@@ -549,16 +562,40 @@ export async function generateAudioWithLiveAPIMultiTurn(
   let currentLineAudio: ArrayBuffer[] = [];
   let turnCompleteResolve: (() => void) | null = null;
   let sessionError: Error | null = null;
+  let chunkCounter = 0; // 세션 전체 청크 카운터
 
   // 유효한 줄만 필터링
   const validLines = lines.map(l => l.trim()).filter(l => l.length > 0);
 
-  if (validLines.length === 0) {
+  if (lines.length === 0) {
     throw new Error("생성할 텍스트가 없습니다.");
   }
 
-  console.log(`[Gemini Live API] Starting Precision Multi-Turn session`);
-  console.log(`[Gemini Live API] Processing ${validLines.length} lines`);
+  console.log(`[Gemini Live API] Starting Precision Paragraph-Based Multi-Turn session`);
+
+  // 빈 줄을 기준으로 문단(Batch) 나누기
+  const paragraphs: string[] = [];
+  let currentGroup: string[] = [];
+
+  for (const line of lines) {
+    if (line.trim().length === 0) {
+      if (currentGroup.length > 0) {
+        paragraphs.push(currentGroup.join('\n'));
+        currentGroup = [];
+      }
+    } else {
+      currentGroup.push(line);
+    }
+  }
+  if (currentGroup.length > 0) {
+    paragraphs.push(currentGroup.join('\n'));
+  }
+
+  if (paragraphs.length === 0) {
+    throw new Error("처리할 수 있는 텍스트 내용이 없습니다.");
+  }
+
+  console.log(`[Gemini Live API] Processing ${paragraphs.length} paragraphs`);
 
   return new Promise(async (resolve, reject) => {
     try {
@@ -571,17 +608,19 @@ export async function generateAudioWithLiveAPIMultiTurn(
             voiceConfig: {
               prebuiltVoiceConfig: {
                 voiceName,
-                // Gemini Live API usually takes 'speech_rate' in v1alpha/v1beta
-                // @ts-ignore - The official SDK typings might be missing this currently
-                speechRate: speed
               }
             }
           },
           systemInstruction: {
             parts: [{
-              text: `[System]: You are a high-fidelity Korean TTS engine. 
-[Voice Style]: ${stylePrompt}
-[Instruction]: Output ONLY the spoken audio. Read precisely as requested.`
+              text: `[System Instruction]: You are a professional Korean voice actor. 
+[Voice Persona]: Warm, calm, and steady late-night radio DJ. Use de-essed, smooth vocal texture.
+[Director's Notes]: ${stylePrompt}
+[Strict Rules]: 
+1. Read the provided text EXACTLY as written. 
+2. DO NOT skip any words, symbols, or sentences. 
+3. Output ONLY the spoken audio. 
+4. DO NOT summarize or interpret.`
             }]
           },
           safetySettings: [
@@ -596,29 +635,37 @@ export async function generateAudioWithLiveAPIMultiTurn(
           onopen: () => {
             console.log('[Gemini Live API] WebSocket opened.');
           },
-          onmessage: (response: any) => {
+          onmessage: async (response: any) => {
+            const isTurnComplete = !!response.serverContent?.turnComplete;
+
             // 오디오 청크 수집
             if (response.serverContent?.modelTurn?.parts) {
               for (const part of response.serverContent.modelTurn.parts) {
                 if (part.inlineData?.data) {
                   const chunk = base64ToArrayBuffer(part.inlineData.data);
+                  // 안정성을 위해 최소한의 로그 출력 유지 (로그 출력 시 발생하는 미세 지연이 수집 안정화에 도움)
+                  console.log(`[Gemini Live API] Chunk received: ${chunk.byteLength} bytes`);
                   currentLineAudio.push(chunk);
                 }
               }
             }
 
-            // 턴 완료 감지
-            if (response.serverContent?.turnComplete) {
-              console.log(`[Gemini Live API] Turn complete.`);
-              if (turnCompleteResolve) {
-                turnCompleteResolve();
-                turnCompleteResolve = null;
+            // 턴 완료 감지 (800ms 대기하여 마지막 청크 수신 보장)
+            if (isTurnComplete) {
+              console.log(`[Gemini Live API] turnComplete received. Starting 800ms protection delay...`);
+              const resolveRef = turnCompleteResolve;
+              turnCompleteResolve = null;
+              if (resolveRef) {
+                setTimeout(() => {
+                  console.log(`[Gemini Live API] 800ms delay finished. Resolving turn.`);
+                  resolveRef();
+                }, 800);
               }
             }
 
             // 인터럽트 감지
             if (response.serverContent?.interrupted) {
-              console.warn('[Gemini Live API] Interrupted!');
+              console.warn(`[Gemini Live API] Server sent "interrupted" signal. Waiting for turnComplete anyway...`);
             }
           },
           onerror: (e: any) => {
@@ -639,26 +686,31 @@ export async function generateAudioWithLiveAPIMultiTurn(
 
       let cumulativeTimeMs = 0;
 
-      for (let i = 0; i < validLines.length; i++) {
+      for (let i = 0; i < paragraphs.length; i++) {
         // 중단 신호 확인
         if (signal?.aborted) {
           session.close();
           throw new Error('사용자에 의해 중단되었습니다.');
         }
 
-        const line = validLines[i];
-        console.log(`[Gemini Live API] Requesting Line ${i + 1}/${validLines.length}: "${line.substring(0, 25)}..."`);
+        const batchText = paragraphs[i];
 
-        // 현재 줄 오디오 초기화
+        // 말줄임표 치환 대신 원본 텍스트 유지 (사용자님 관찰 반영)
+        const processedBatch = batchText;
+
+        console.log(`[Gemini Live API] Requesting Paragraph ${i + 1}/${paragraphs.length}: "${processedBatch.substring(0, 30).replace(/\n/g, ' ')}..."`);
+
+        // 현재 줄 오디오 초기화 및 청크 카운터 리셋
         currentLineAudio = [];
+        chunkCounter = 0;
 
         // 턴 완료 대기 Promise 생성
         const turnCompletePromise = new Promise<void>((res) => {
           turnCompleteResolve = res;
         });
 
-        // Send the line. We keep the instruction to avoid hallucinations, but very brief.
-        const linePrompt = `Read: "${line}"`;
+        // Send the batch with a clear instruction
+        const linePrompt = `Please read this text exactly: "${processedBatch}"`;
 
         await session.sendClientContent({
           turns: [{ role: 'user', parts: [{ text: linePrompt }] }],
@@ -702,7 +754,8 @@ export async function generateAudioWithLiveAPIMultiTurn(
 
       resolve({
         audioBuffer: finalAudio,
-        lineTimings: lineTimings
+        lineTimings: lineTimings,
+        paragraphs: paragraphs
       });
 
     } catch (error) {
