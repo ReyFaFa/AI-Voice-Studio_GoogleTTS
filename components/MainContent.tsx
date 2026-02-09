@@ -38,6 +38,8 @@ export interface MainContentProps {
     onSavePreset: (name: string) => void;
     onDeletePreset: (id: string) => void;
     onLoadPreset: (id: string) => void;
+    onExportPreset: () => void;
+    onImportPreset: (file: File) => void;
 
     // Main Props
     isLoading: boolean;
@@ -280,7 +282,7 @@ export const MainContent: React.FC<MainContentProps> = ({
     // New Props
     selectedModel, setSelectedModel, stylePrompt, setStylePrompt, favorites, toggleFavorite,
 
-    presets, onSavePreset, onDeletePreset, onLoadPreset,
+    presets, onSavePreset, onDeletePreset, onLoadPreset, onExportPreset, onImportPreset,
 
     isLoading,
     loadingStatus,
@@ -328,6 +330,8 @@ export const MainContent: React.FC<MainContentProps> = ({
     const [isAutoplayOnClickEnabled, setIsAutoplayOnClickEnabled] = useState(false);
     const [isPresetSaveOpen, setIsPresetSaveOpen] = useState(false);
     const [presetName, setPresetName] = useState('');
+    const [selectedPresetId, setSelectedPresetId] = useState<string>('');
+    const fileInputRef = useRef<HTMLInputElement>(null);
 
     // Pagination state
     const [currentPage, setCurrentPage] = useState(1);
@@ -392,6 +396,15 @@ export const MainContent: React.FC<MainContentProps> = ({
 
     const handleSpeedChange = (newSpeed: number) => {
         setSpeechSpeed(Math.max(0.5, Math.min(2.0, Number(newSpeed.toFixed(1)))));
+    };
+
+    const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (file) {
+            onImportPreset(file);
+        }
+        // Reset input so same file can be selected again
+        e.target.value = '';
     };
 
     const handleSavePresetClick = () => {
@@ -548,32 +561,63 @@ export const MainContent: React.FC<MainContentProps> = ({
                                     <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider whitespace-nowrap">프리셋:</label>
                                     <select
                                         className="bg-gray-700 text-xs text-white border border-gray-600 rounded py-1 px-2 flex-grow focus:outline-none focus:ring-1 focus:ring-indigo-500"
+                                        value={selectedPresetId}
                                         onChange={(e) => {
-                                            if (e.target.value) onLoadPreset(e.target.value);
+                                            const val = e.target.value;
+                                            setSelectedPresetId(val);
+                                            if (val) onLoadPreset(val);
                                         }}
-                                        defaultValue=""
                                     >
                                         <option value="" disabled>설정 불러오기...</option>
                                         {presets.map(p => (
                                             <option key={p.id} value={p.id}>{p.name}</option>
                                         ))}
                                     </select>
-                                    {presets.length > 0 && (
-                                        <button
-                                            onClick={() => {
-                                                const select = document.querySelector('select') as HTMLSelectElement; // Should target specific select better but works for now in context
-                                                // Actually we can't easily get the selected ID without state for dropdown value. 
-                                                // Instead, let's add delete button next to items in a custom dropdown or just keep it simple: 
-                                                // "Delete current loaded?" No, that's ambiguous.
-                                                // Let's rely on user selecting and maybe a separate delete button or better UI later.
-                                                // For now, let's keep it simple: Just Load and Save.
-                                            }}
-                                            className="hidden" // Placeholder
-                                        >
-                                        </button>
-                                    )}
+
+                                    {/* Delete Preset Button */}
+                                    <button
+                                        onClick={() => {
+                                            if (confirm('정말 이 프리셋을 삭제하시겠습니까?')) {
+                                                onDeletePreset(selectedPresetId);
+                                                setSelectedPresetId('');
+                                            }
+                                        }}
+                                        disabled={!selectedPresetId}
+                                        className="p-1 text-gray-400 hover:text-red-500 disabled:opacity-30 disabled:hover:text-gray-400 transition-colors"
+                                        title="선택된 프리셋 삭제"
+                                    >
+                                        <TrashIcon className="w-4 h-4" />
+                                    </button>
                                 </div>
+
+                                {/* Right Side Actions: Save/Load File & Save Preset */}
                                 <div className="flex items-center gap-2 relative">
+                                    <input
+                                        type="file"
+                                        ref={fileInputRef}
+                                        onChange={handleFileChange}
+                                        accept=".json"
+                                        className="hidden"
+                                    />
+
+                                    <button
+                                        onClick={() => fileInputRef.current?.click()}
+                                        className="p-1 text-gray-400 hover:text-indigo-400 transition-colors"
+                                        title="설정 파일 불러오기 (Import)"
+                                    >
+                                        <ArrowUpIcon className="w-4 h-4" />
+                                    </button>
+
+                                    <button
+                                        onClick={onExportPreset}
+                                        className="p-1 text-gray-400 hover:text-indigo-400 transition-colors"
+                                        title="현재 설정 파일로 저장 (Export)"
+                                    >
+                                        <DownloadIcon className="w-4 h-4" />
+                                    </button>
+
+                                    <div className="w-px h-4 bg-gray-600 mx-1"></div>
+
                                     {isPresetSaveOpen ? (
                                         <div className="flex items-center gap-2 absolute right-0 bg-gray-800 border border-gray-600 p-1 rounded shadow-xl z-20">
                                             <input
@@ -592,10 +636,10 @@ export const MainContent: React.FC<MainContentProps> = ({
                                         <button
                                             onClick={() => setIsPresetSaveOpen(true)}
                                             className="flex items-center gap-1.5 text-xs bg-gray-700 hover:bg-gray-600 text-gray-300 px-2 py-1 rounded border border-gray-600 transition-colors"
-                                            title="현재 설정(모델, 음성, 스타일)을 저장합니다"
+                                            title="현재 설정(모델, 음성, 스타일) 브라우저에 저장"
                                         >
                                             <FloppyDiskIcon className="w-3.5 h-3.5" />
-                                            <span>설정 저장</span>
+                                            <span>저장</span>
                                         </button>
                                     )}
                                 </div>

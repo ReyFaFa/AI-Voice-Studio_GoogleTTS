@@ -184,6 +184,53 @@ export function App() {
         setSpeechSpeed(preset.speed);
     };
 
+    const handleExportPreset = () => {
+        const currentPreset: Preset = {
+            id: Date.now().toString(),
+            name: `Preset-${new Date().toLocaleTimeString()}`,
+            voiceId: singleSpeakerVoice,
+            stylePrompt,
+            model: selectedModel,
+            speed: speechSpeed
+        };
+
+        const jsonString = JSON.stringify(currentPreset, null, 2);
+        const blob = new Blob([jsonString], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `preset-${new Date().getTime()}.json`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    };
+
+    const handleImportPreset = (file: File) => {
+        const reader = new FileReader();
+        reader.onload = (e) => {
+            try {
+                const content = e.target?.result as string;
+                const importedPreset: Preset = JSON.parse(content);
+
+                // Simple validation
+                if (importedPreset.voiceId && importedPreset.model) {
+                    setSingleSpeakerVoice(importedPreset.voiceId);
+                    setStylePrompt(importedPreset.stylePrompt || '');
+                    setSelectedModel(importedPreset.model);
+                    setSpeechSpeed(importedPreset.speed || 1.0);
+                    alert("프리셋을 불러왔습니다.");
+                } else {
+                    alert("올바르지 않은 프리셋 파일입니다.");
+                }
+            } catch (err) {
+                console.error("Failed to parse preset file", err);
+                alert("프리셋 파일을 읽는 중 오류가 발생했습니다.");
+            }
+        };
+        reader.readAsText(file);
+    };
+
     const scriptAnalysis = useMemo(() => {
         const fullText = scriptLines.map(l => l.text).join('\n');
         return analyzeScript(fullText);
@@ -995,6 +1042,8 @@ export function App() {
                         onSavePreset={handleSavePreset}
                         onDeletePreset={handleDeletePreset}
                         onLoadPreset={handleLoadPreset}
+                        onExportPreset={handleExportPreset}
+                        onImportPreset={handleImportPreset}
 
                         isLoading={isLoading}
                         loadingStatus={loadingStatus}
