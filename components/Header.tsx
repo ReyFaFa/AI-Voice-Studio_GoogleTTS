@@ -1,5 +1,45 @@
 import React from 'react';
-import { SrtLine } from '../types';
+import JSZip from 'jszip';
+import { SrtLine, AudioChunkItem } from '../types';
+
+// =================================================================================
+// ZIP DOWNLOAD UTILS
+// =================================================================================
+
+/**
+ * 청크별 오디오를 ZIP 파일로 다운로드합니다.
+ * @param chunks AudioChunkItem 배열
+ * @param baseFilename ZIP 파일명 기본값
+ */
+export async function downloadChunksAsZip(
+    chunks: AudioChunkItem[],
+    baseFilename: string = 'tts-audio'
+): Promise<void> {
+    const zip = new JSZip();
+
+    for (const chunk of chunks) {
+        // WAV 파일 생성
+        const wavBlob = encodeAudioBufferToWavBlob(chunk.buffer);
+        const wavFilename = `${String(chunk.index + 1).padStart(2, '0')}-chunk.wav`;
+        zip.file(wavFilename, wavBlob);
+
+        // 대본 텍스트 파일
+        const txtFilename = `${String(chunk.index + 1).padStart(2, '0')}-script.txt`;
+        zip.file(txtFilename, chunk.text);
+    }
+
+    const zipBlob = await zip.generateAsync({ type: 'blob' });
+
+    const url = URL.createObjectURL(zipBlob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `${baseFilename}-chunks.zip`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
 
 // =================================================================================
 // AUDIO UTILS

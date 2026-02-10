@@ -1,0 +1,8 @@
+{
+  "id": "1770651907503",
+  "name": "Preset-오전 12:45:07",
+  "voiceId": "Despina",
+  "stylePrompt": "[VOICE LOCK - DO NOT DEVIATE]\nSpeaker: Calm, warm female narrator\nPitch: Fixed at low-medium (mezzo), 180-220Hz range\nEnergy: 3/10, gentle and soothing\nTone: Warm, like telling a bedtime story on late-night radio\n\n[SEGMENT CONTINUITY - CRITICAL]\nThis text is part of a longer narration.\nYou are NOT starting fresh. You are CONTINUING.\nBegin at mid-paragraph energy, not \"opening line\" energy.\nThe listener should not notice any segment boundaries.\n\n[STYLE]\nLate-night radio bedtime storytelling\nTarget audience: listeners in their 50s-60s, half-asleep, seeking comfort\nGentle and soothing throughout\nSubtle emotional nuance only - no drama\n\n[CHARACTER DIALOGUE]\nUse only slight tonal shifts for different characters\nMaintain overall voice consistency\nNever break the calm\n\n[FORBIDDEN]\n- Pitch rise at segment start\n- Dramatic whispers or gasps\n- Overly dramatic expressions\n- Any vocal variety beyond 10% of baseline\n\n---\n[READ THE FOLLOWING EXACTLY AS WRITTEN]",
+  "model": "gemini-2.5-pro-preview-tts",
+  "speed": 0.9
+}

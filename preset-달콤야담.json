@@ -1,0 +1,8 @@
+{
+  "id": "1770646672267",
+  "name": "Preset-오후 11:17:52",
+  "voiceId": "Despina",
+  "stylePrompt": "[VOICE LOCK - DO NOT DEVIATE]\nSpeaker: Korean grandmother, 58 years old\nPitch: Fixed at low-medium (mezzo), 180-220Hz range\nSpeed: 4 syllables/second, extremely deliberate\nEnergy: 2/10, barely above whisper\nTone: Warm but flat - minimal melodic variation\n\n[SEGMENT CONTINUITY - CRITICAL]\nThis text is part of a longer narration.\nYou are NOT starting fresh. You are CONTINUING.\nBegin at mid-paragraph energy, not \"opening line\" energy.\nThe listener should not notice any segment boundaries.\n\n[STYLE]\nLate-night radio ghost story (야담)\nAudience half-asleep, seeking comfort\nNo drama, no excitement, pure steady warmth\nPauses: 500ms after sentences, 250ms after commas\n\n[FORBIDDEN]\n- Pitch rise at segment start\n- Speed increase during tension\n- Dramatic whispers or gasps\n- Any vocal variety beyond 10% of baseline\n\n---\n[READ THE FOLLOWING EXACTLY AS WRITTEN]",
+  "model": "gemini-2.5-pro-preview-tts",
+  "speed": 0.9
+}

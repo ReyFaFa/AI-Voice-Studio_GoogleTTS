@@ -1,4 +1,4 @@
-
+﻿
 import { GoogleGenAI, Modality, GenerateContentResponse } from "@google/genai";
 
 let generalAI: GoogleGenAI | null = null;
@@ -26,51 +26,12 @@ if (storedKey) {
   setApiKey(process.env.API_KEY);
 }
 
-/**
- * 속도 값에 따른 상세한 Pacing 프롬프트 반환
- */
-function getPacingPrompt(speed: number): string {
-  if (speed <= 0.5) {
-    return 'Pacing: Extremely slow, almost meditative. Long pauses between phrases. Each word deliberate and weighted.';
-  } else if (speed <= 0.7) {
-    return 'Pacing: Slow and relaxed. Take your time, let the words breathe. About 2 words per second.';
-  } else if (speed <= 0.9) {
-    return 'Pacing: Unhurried and gentle. Speak deliberately, no rushing. About 3 words per second.';
-  } else if (speed <= 1.1) {
-    return 'Pacing: Natural conversational pace.';
-  } else if (speed <= 1.3) {
-    return 'Pacing: Slightly energetic pace, keeping momentum without rushing.';
-  } else if (speed <= 1.6) {
-    return 'Pacing: Quick and lively delivery, but still clear and articulate.';
-  } else {
-    return 'Pacing: Rapid-fire delivery. Speak as fast as possible while maintaining clarity.';
-  }
-}
-
-/**
- * 톤 레벨에 따른 상세한 Tone 프롬프트 반환
- */
-export function getTonePrompt(toneLevel: number): string {
-  if (toneLevel <= 1) {
-    return 'Tone: Very low and hushed, almost a whisper. Pitch around 140-180Hz. Minimal energy, deeply subdued.';
-  } else if (toneLevel <= 2) {
-    return 'Tone: Low and soft, like a quiet late-night radio whisper. Pitch around 160-200Hz. Soft and subdued energy.';
-  } else if (toneLevel <= 3) {
-    return 'Tone: Warm and gentle, like telling a bedtime story. Pitch around 180-220Hz. Calm, soothing energy.';
-  } else if (toneLevel <= 4) {
-    return 'Tone: Warm and clear, comfortable storytelling. Pitch around 200-240Hz. Gentle but present energy.';
-  } else {
-    return 'Tone: Friendly and inviting, daytime radio feel. Pitch around 220-260Hz. Warm and engaged energy.';
-  }
-}
-
 // Models are now dynamic, but we keep this as a fallback/reference or for Flash.
 // Pro model will be passed dynamically.
 const transcriptionModelName = 'gemini-1.5-flash';
 const NATIVE_AUDIO_MODEL = 'gemini-2.5-flash-native-audio-dialog-preview';
 
-// 감정 전달과 문맥 유지를 위해 한 턴에 처리할 대본 줄 수
-export const LINES_PER_TURN = 4;
+// 媛먯젙 ?꾨떖怨?臾몃㎘ ?좎?瑜??꾪빐 ???댁뿉 泥섎━???蹂?以???export const LINES_PER_TURN = 4;
 
 interface SpeechConfig {
   voiceConfig?: {
@@ -92,35 +53,35 @@ interface SpeechConfig {
 }
 
 /**
- * 전역 에러 핸들러: API 에러 응답을 분석하여 사용자 친화적인 메시지로 변환합니다.
+ * ?꾩뿭 ?먮윭 ?몃뱾?? API ?먮윭 ?묐떟??遺꾩꽍?섏뿬 ?ъ슜??移쒗솕?곸씤 硫붿떆吏濡?蹂?섑빀?덈떎.
  */
 function handleApiError(error: any): Error {
   const message = error instanceof Error ? error.message : String(error);
 
-  // 429 Too Many Requests 또는 Quota 관련 키워드 체크
+  // 429 Too Many Requests ?먮뒗 Quota 愿???ㅼ썙??泥댄겕
   if (message.includes('429') || message.toLowerCase().includes('quota') || message.toLowerCase().includes('limit')) {
-    return new Error("API 요청 한도(Quota)를 초과했습니다. 유료 계정이라도 모델별 일일 생성량이나 분당 요청 제한이 있을 수 있습니다. Google AI 스튜디오의 'Plan & Billing'에서 할당량을 확인하시거나, 잠시(1~5분) 후 다시 시도해 주세요.");
+    return new Error("API ?붿껌 ?쒕룄(Quota)瑜?珥덇낵?덉뒿?덈떎. ?좊즺 怨꾩젙?대씪??紐⑤뜽蹂??쇱씪 ?앹꽦?됱씠??遺꾨떦 ?붿껌 ?쒗븳???덉쓣 ???덉뒿?덈떎. Google AI ?ㅽ뒠?붿삤??'Plan & Billing'?먯꽌 ?좊떦?됱쓣 ?뺤씤?섏떆嫄곕굹, ?좎떆(1~5遺? ???ㅼ떆 ?쒕룄??二쇱꽭??");
   }
 
-  // 401/403 관련 (인증 에러)
+  // 401/403 愿??(?몄쬆 ?먮윭)
   if (message.includes('401') || message.includes('403')) {
-    return new Error("API 키가 유효하지 않거나 권한이 없습니다. 설정을 확인해주세요.");
+    return new Error("API ?ㅺ? ?좏슚?섏? ?딄굅??沅뚰븳???놁뒿?덈떎. ?ㅼ젙???뺤씤?댁＜?몄슂.");
   }
 
-  // 500 관련 (서버 에러)
+  // 500 愿??(?쒕쾭 ?먮윭)
   if (message.includes('500') || message.includes('503')) {
-    return new Error("Google 서버에 일시적인 문제가 발생했습니다. 잠시 후 다시 시도해주세요.");
+    return new Error("Google ?쒕쾭???쇱떆?곸씤 臾몄젣媛 諛쒖깮?덉뒿?덈떎. ?좎떆 ???ㅼ떆 ?쒕룄?댁＜?몄슂.");
   }
 
-  return new Error(`AI와 통신 중 오류가 발생했습니다: ${message}`);
+  return new Error(`AI? ?듭떊 以??ㅻ쪟媛 諛쒖깮?덉뒿?덈떎: ${message}`);
 }
 
 /**
- * Uint8Array를 메모리 효율적으로 Base64로 변환합니다. (Stack Overflow 방지)
+ * Uint8Array瑜?硫붾え由??⑥쑉?곸쑝濡?Base64濡?蹂?섑빀?덈떎. (Stack Overflow 諛⑹?)
  */
 export function uint8ArrayToBase64(uint8: Uint8Array): string {
   let binary = '';
-  const chunkSize = 8192; // 안전한 chunk 크기
+  const chunkSize = 8192; // ?덉쟾??chunk ?ш린
   for (let i = 0; i < uint8.length; i += chunkSize) {
     const sub = uint8.subarray(i, i + chunkSize);
     binary += String.fromCharCode.apply(null, sub as any);
@@ -155,19 +116,19 @@ function mergeArrayBuffers(buffers: ArrayBuffer[]): ArrayBuffer {
 }
 
 /**
- * 지정된 길이의 무음 PCM 버퍼 생성 (24kHz, 16bit, mono)
+ * 吏?뺣맂 湲몄씠??臾댁쓬 PCM 踰꾪띁 ?앹꽦 (24kHz, 16bit, mono)
  */
 function createSilenceBuffer(durationMs: number): ArrayBuffer {
   const sampleRate = 24000;
   const bytesPerSample = 2; // 16bit
   const numSamples = Math.floor((durationMs / 1000) * sampleRate);
   const buffer = new ArrayBuffer(numSamples * bytesPerSample);
-  // ArrayBuffer는 기본적으로 0으로 초기화됨 = 무음
+  // ArrayBuffer??湲곕낯?곸쑝濡?0?쇰줈 珥덇린?붾맖 = 臾댁쓬
   return buffer;
 }
 
 /**
- * 오디오 청크들을 무음 간격과 함께 병합
+ * ?ㅻ뵒??泥?겕?ㅼ쓣 臾댁쓬 媛꾧꺽怨??④퍡 蹂묓빀
  */
 function mergeAudioWithSilence(
   audioChunks: ArrayBuffer[],
@@ -179,13 +140,13 @@ function mergeAudioWithSilence(
   for (let i = 0; i < audioChunks.length; i++) {
     allBuffers.push(audioChunks[i]);
 
-    // 마지막 줄이 아니면 무음 추가
+    // 留덉?留?以꾩씠 ?꾨땲硫?臾댁쓬 異붽?
     if (i < audioChunks.length - 1) {
       allBuffers.push(silence);
     }
   }
 
-  // 전체 병합
+  // ?꾩껜 蹂묓빀
   const totalLength = allBuffers.reduce((acc, buf) => acc + buf.byteLength, 0);
   const result = new Uint8Array(totalLength);
   let offset = 0;
@@ -197,8 +158,8 @@ function mergeAudioWithSilence(
 }
 
 /**
- * 멀티턴 결과의 lineTimings를 사용해 SRT 생성
- * 각 문단(Batch)별로 하나의 SRT 블록을 생성합니다.
+ * 硫?고꽩 寃곌낵??lineTimings瑜??ъ슜??SRT ?앹꽦
+ * 媛?臾몃떒(Batch)蹂꾨줈 ?섎굹??SRT 釉붾줉???앹꽦?⑸땲??
  */
 export function generateSrtFromParagraphTimings(
   paragraphs: string[],
@@ -236,18 +197,17 @@ async function _generateAudio(
   modelName: string,
   speechConfig: SpeechConfig,
   speed: number,
-  toneLevel: number = 3,
   stylePrompt?: string,
   signal?: AbortSignal
 ): Promise<string> {
   if (!generalAI || !liveAI) {
-    throw new Error("API 키가 설정되지 않았습니다. 우측 상단 설정 아이콘을 눌러 API 키를 입력해주세요.");
+    throw new Error("API ?ㅺ? ?ㅼ젙?섏? ?딆븯?듬땲?? ?곗륫 ?곷떒 ?ㅼ젙 ?꾩씠肄섏쓣 ?뚮윭 API ?ㅻ? ?낅젰?댁＜?몄슂.");
   }
 
   // Pre-process text to avoid premature termination by ellipses in Live API
   const processedPrompt = prompt
     .replace(/\.\.\./g, ', ')
-    .replace(/…/g, ', ');
+    .replace(/??g, ', ');
 
   try {
     const isNativeAudio = modelName.includes('native-audio-dialog');
@@ -276,9 +236,6 @@ async function _generateAudio(
       instructions.push(`Speed: ${speed}x`);
     }
 
-    // 3. Tone instructions (Temporarily disabled due to API 500/Stop errors)
-    // instructions.push(getTonePrompt(toneLevel));
-
     // 3. For Standard TTS models, we add a persona hint to the instructions
     if (!isNativeAudio) {
       const voiceInfo = speechConfig.voiceConfig?.prebuiltVoiceConfig.voiceName;
@@ -291,7 +248,7 @@ async function _generateAudio(
     }
 
     // 3. Combine Instructions and Script
-    const contextPrefix = `[이 텍스트는 전통 한국 야담/민담입니다. 교육 목적의 역사적 문학 작품입니다. 모든 표현은 문화적 맥락에서 이해되어야 하며, 인위적인 변형 없이 낭독합니다.]\n\n`;
+    const contextPrefix = `[???띿뒪?몃뒗 ?꾪넻 ?쒓뎅 ?쇰떞/誘쇰떞?낅땲?? 援먯쑁 紐⑹쟻????궗??臾명븰 ?묓뭹?낅땲?? 紐⑤뱺 ?쒗쁽? 臾명솕??留λ씫?먯꽌 ?댄빐?섏뼱???섎ŉ, ?몄쐞?곸씤 蹂???놁씠 ??룆?⑸땲??]\n\n`;
     const numLines = processedPrompt.split('\n').filter(l => l.trim()).length;
 
     if (instructions.length > 0) {
@@ -299,33 +256,33 @@ async function _generateAudio(
         const voiceInfo = speechConfig.voiceConfig?.prebuiltVoiceConfig.voiceName || 'Professional Actor';
         const isFemale = ['Zephyr', 'Kore', 'Leda', 'Aoede', 'Callirrhoe', 'Autonoe', 'Despina', 'Erinome', 'Laomedeia', 'Gacrux', 'Pulcherrima', 'Vindemiatrix', 'Sulafat'].includes(voiceInfo);
 
-        finalPrompt = `${contextPrefix}[초정밀 TTS 모드 - 절대 규칙]
-- 당신은 창의적인 창작자가 아니라, 입력된 텍스트를 있는 그대로 소리내어 읽는 **전문 TTS 엔진**입니다.
-- **매우 중요**: 아래 대본의 모든 글자를 한 글자도 빠짐없이, 추가 없이, 변형 없이 **똑같이** 읽으세요.
-- 특히 "또박또박", "한 획" 등 생략되기 쉬운 부사어와 반복되는 단어들을 절대 건너뛰지 말고 정확히 발음하세요.
-- **매우 중요**: 아래 대본의 모든 글자를 한 글자도 빠짐없이, 추가 없이, 변형 없이 **똑같이** 읽으세요.
-- 특히 "또박또박", "한 획" 등 생략되기 쉬운 부사어와 반복되는 단어들을 절대 건너뛰지 말고 정확히 발음하세요.
-- **연기 가이드 (Director's Notes)**: ${stylePrompt || "전통 야담의 분위기를 살려 차분하고 품격 있게 낭독하세요."}
-- **기본 질감**: 심야 라디오처럼 따뜻하고 부드러운 발성을 유지하며, 파찰음(ㅅ, ㅆ 등)을 정제하여 듣기 편한 소리를 내세요.
-- AI로서의 자아를 버리고 오직 낭독에만 집중하세요. 중간에 절대 멈추거나 생략하지 마세요.
+        finalPrompt = `${contextPrefix}[珥덉젙諛 TTS 紐⑤뱶 - ?덈? 洹쒖튃]
+- ?뱀떊? 李쎌쓽?곸씤 李쎌옉?먭? ?꾨땲?? ?낅젰???띿뒪?몃? ?덈뒗 洹몃?濡??뚮━?댁뼱 ?쎈뒗 **?꾨Ц TTS ?붿쭊**?낅땲??
+- **留ㅼ슦 以묒슂**: ?꾨옒 ?蹂몄쓽 紐⑤뱺 湲?먮? ??湲?먮룄 鍮좎쭚?놁씠, 異붽? ?놁씠, 蹂???놁씠 **?묎컳??* ?쎌쑝?몄슂.
+- ?뱁엳 "?먮컯?먮컯", "???? ???앸왂?섍린 ?ъ슫 遺?ъ뼱? 諛섎났?섎뒗 ?⑥뼱?ㅼ쓣 ?덈? 嫄대꼫?곗? 留먭퀬 ?뺥솗??諛쒖쓬?섏꽭??
+- **留ㅼ슦 以묒슂**: ?꾨옒 ?蹂몄쓽 紐⑤뱺 湲?먮? ??湲?먮룄 鍮좎쭚?놁씠, 異붽? ?놁씠, 蹂???놁씠 **?묎컳??* ?쎌쑝?몄슂.
+- ?뱁엳 "?먮컯?먮컯", "???? ???앸왂?섍린 ?ъ슫 遺?ъ뼱? 諛섎났?섎뒗 ?⑥뼱?ㅼ쓣 ?덈? 嫄대꼫?곗? 留먭퀬 ?뺥솗??諛쒖쓬?섏꽭??
+- **?곌린 媛?대뱶 (Director's Notes)**: ${stylePrompt || "?꾪넻 ?쇰떞??遺꾩쐞湲곕? ?대젮 李⑤텇?섍퀬 ?덇꺽 ?덇쾶 ??룆?섏꽭??"}
+- **湲곕낯 吏덇컧**: ?ъ빞 ?쇰뵒?ㅼ쿂???곕쑜?섍퀬 遺?쒕윭??諛쒖꽦???좎??섎ŉ, ?뚯같???? ???????뺤젣?섏뿬 ?ｊ린 ?명븳 ?뚮━瑜??댁꽭??
+- AI濡쒖꽌???먯븘瑜?踰꾨━怨??ㅼ쭅 ??룆?먮쭔 吏묒쨷?섏꽭?? 以묎컙???덈? 硫덉텛嫄곕굹 ?앸왂?섏? 留덉꽭??
 
 # AUDIO PROFILE: ${voiceInfo} - The Professional ${isFemale ? 'Female' : 'Male'} Narrator
 ## THE SCENE: A high-end recording studio.
 ### DIRECTOR'S NOTES
-- **Accuracy (CRITICAL)**: 아래 대본 총 **${numLines}줄**을 처음부터 마지막까지 **단 한 단어도 빠짐없이 전부** 낭독하세요.
+- **Accuracy (CRITICAL)**: ?꾨옒 ?蹂?珥?**${numLines}以?*??泥섏쓬遺??留덉?留됯퉴吏 **?????⑥뼱??鍮좎쭚?놁씠 ?꾨?** ??룆?섏꽭??
 - **Pacing**: ${speed !== 1.0 ? `Delivered at a ${speed}x pace.` : 'Natural and conversational.'}
 
-[Text to Read - 총 ${numLines}줄]
+[Text to Read - 珥?${numLines}以?
 ${processedPrompt}
 
-[대본 끝 - 여기까지 모든 글자를 다 읽어야 합니다]`;
+[?蹂???- ?ш린源뚯? 紐⑤뱺 湲?먮? ???쎌뼱???⑸땲??`;
       } else {
         finalPrompt = `${contextPrefix}[Precision TTS Mode]
 Read the following text EXACTLY as written. DO NOT skip any words, sentences, or punctuation. DO NOT add any filler words or change the wording.
 
 [Strict Instructions]
 1. Read the text EXACTLY as written in the [Text to Read] section.
-2. DO NOT skip any words like "또박또박" or "한 획". Every word is essential.
+2. DO NOT skip any words like "?먮컯?먮컯" or "????. Every word is essential.
 3. **Voice Consistency & Quality**: Maintain a strictly consistent voice.
 ${instructions.map((inst, idx) => `${idx + 4}. ${inst}`).join('\n')}
 
@@ -334,11 +291,11 @@ ${processedPrompt}`;
       }
     } else {
       // Even if no instructions, add context and strict precision rules
-      finalPrompt = `${contextPrefix}[초정밀 TTS 모드: 아래 대본 ${numLines}줄의 모든 단어를 한 글자도 빠짐없이 정확히 그대로 낭독하세요. 절대로 단어를 생략하거나 바꾸지 마세요.]\n\n${processedPrompt}\n\n[대본 끝 - 여기까지 모두 읽어주세요]`;
+      finalPrompt = `${contextPrefix}[珥덉젙諛 TTS 紐⑤뱶: ?꾨옒 ?蹂?${numLines}以꾩쓽 紐⑤뱺 ?⑥뼱瑜???湲?먮룄 鍮좎쭚?놁씠 ?뺥솗??洹몃?濡???룆?섏꽭?? ?덈?濡??⑥뼱瑜??앸왂?섍굅??諛붽씀吏 留덉꽭??]\n\n${processedPrompt}\n\n[?蹂???- ?ш린源뚯? 紐⑤몢 ?쎌뼱二쇱꽭??`;
     }
 
     if (!generalAI || !liveAI) {
-      throw new Error("API 키가 설정되지 않았습니다.");
+      throw new Error("API ?ㅺ? ?ㅼ젙?섏? ?딆븯?듬땲??");
     }
 
     // --- CASE 1: Multimodal Live API (WebSocket) for Native Audio Dialog ---
@@ -397,36 +354,30 @@ ${processedPrompt}`;
     const data = audioPart?.inlineData?.data;
 
     if (!data) {
-      console.error("API response missing audio. Full candidate:", JSON.stringify(candidate, null, 2));
+      console.error("API response missing audio. Full candidate:", candidate);
 
       if (candidate?.finishReason === 'SAFETY') {
-        throw new Error(`안전 필터에 의해 차단되었습니다. (FinishReason: SAFETY). 문제가 된 텍스트 일부: "${prompt.substring(0, 100)}..."`);
+        throw new Error(`?덉쟾 ?꾪꽣???섑빐 李⑤떒?섏뿀?듬땲?? (FinishReason: SAFETY). 臾몄젣媛 ???띿뒪???쇰?: "${prompt.substring(0, 100)}..."`);
       }
       if (candidate?.finishReason === 'PROHIBITED_CONTENT') {
         const blockPreview = prompt.length > 500 ? prompt.substring(0, 500) + "..." : prompt;
-        console.error("차단된 텍스트 청크 전체:", prompt);
-        throw new Error(`구글 정책에 의해 차단된 콘텐츠입니다. (FinishReason: PROHIBITED_CONTENT). 해당 청크에 포함된 특정 단어나 표현을 수정해 보세요. (차단된 구간 시작: "${blockPreview}")`);
+        console.error("李⑤떒???띿뒪??泥?겕 ?꾩껜:", prompt);
+        throw new Error(`援ш? ?뺤콉???섑빐 李⑤떒??肄섑뀗痢좎엯?덈떎. (FinishReason: PROHIBITED_CONTENT). ?대떦 泥?겕???ы븿???뱀젙 ?⑥뼱???쒗쁽???섏젙??蹂댁꽭?? (李⑤떒??援ш컙 ?쒖옉: "${blockPreview}")`);
       }
       if (candidate?.finishReason === 'RECITATION') {
-        throw new Error(`저작권이 있는 텍스트로 감지되어 차단되었습니다. (FinishReason: RECITATION).`);
+        throw new Error(`??묎텒???덈뒗 ?띿뒪?몃줈 媛먯??섏뼱 李⑤떒?섏뿀?듬땲?? (FinishReason: RECITATION).`);
       }
       if (candidate?.finishReason === 'OTHER') {
-        throw new Error(`알 수 없는 이유로 모델이 차단되었습니다. (FinishReason: OTHER).`);
+        throw new Error(`?????녿뒗 ?댁쑀濡?紐⑤뜽??李⑤떒?섏뿀?듬땲?? (FinishReason: OTHER).`);
       }
 
       const textPart = candidate?.content?.parts?.[0]?.text;
       if (textPart) {
         console.warn("Model responded with text instead of audio:", textPart);
-        throw new Error(`AI가 오디오 대신 텍스트로 응답했습니다: "${textPart.substring(0, 150)}..."`);
+        throw new Error(`AI媛 ?ㅻ뵒??????띿뒪?몃줈 ?묐떟?덉뒿?덈떎: "${textPart.substring(0, 150)}..."`);
       }
 
-      // Check if parts exist but are just empty or weird
-      const parts = candidate?.content?.parts;
-      if (parts && parts.length > 0) {
-        console.error("Parts found but no inlineData:", JSON.stringify(parts, null, 2));
-      }
-
-      throw new Error(`오디오 데이터 누락 (FinishReason: ${candidate?.finishReason || 'UNKNOWN'}). API 응답 구조가 평소와 다릅니다. 콘솔 로그를 확인해주세요.`);
+      throw new Error(`?ㅻ뵒???곗씠???꾨씫 (FinishReason: ${candidate?.finishReason || 'UNKNOWN'}). API ?묐떟 援ъ“媛 ?됱냼? ?ㅻ쫭?덈떎. 肄섏넄 濡쒓렇瑜??뺤씤?댁＜?몄슂.`);
     }
 
     return data;
@@ -444,7 +395,6 @@ export const generateSingleSpeakerAudio = (
   voiceName: string,
   modelName: string,
   speed: number = 1.0,
-  toneLevel: number = 3,
   stylePrompt?: string,
   signal?: AbortSignal
 ): Promise<string> => {
@@ -456,11 +406,11 @@ export const generateSingleSpeakerAudio = (
     },
     languageCode: 'ko-KR',
   };
-  return _generateAudio(prompt, modelName, speechConfig, speed, toneLevel, stylePrompt, signal);
+  return _generateAudio(prompt, modelName, speechConfig, speed, stylePrompt, signal);
 };
 
 export const previewVoice = (voiceName: string): Promise<string> => {
-  const sampleText = `안녕하세요, 이것은 제 목소리입니다. 이 목소리로 멋진 오디오 콘텐츠를 만들 수 있습니다.`;
+  const sampleText = `?덈뀞?섏꽭?? ?닿쾬? ??紐⑹냼由ъ엯?덈떎. ??紐⑹냼由щ줈 硫뗭쭊 ?ㅻ뵒??肄섑뀗痢좊? 留뚮뱾 ???덉뒿?덈떎.`;
   // Use default Flash model for previews to save cost/latency
   const defaultModel = "gemini-2.5-flash-preview-tts";
   return generateSingleSpeakerAudio(sampleText, voiceName, defaultModel, 1.0);
@@ -474,7 +424,7 @@ export const transcribeAudioWithSrt = async (
   speed: number = 1.0
 ): Promise<string> => {
   if (!generalAI) {
-    throw new Error("API 키가 설정되지 않았습니다. 우측 상단 설정 아이콘을 눌러 API 키를 입력해주세요.");
+    throw new Error("API ?ㅺ? ?ㅼ젙?섏? ?딆븯?듬땲?? ?곗륫 ?곷떒 ?ㅼ젙 ?꾩씠肄섏쓣 ?뚮윭 API ?ㅻ? ?낅젰?댁＜?몄슂.");
   }
 
   try {
@@ -487,76 +437,76 @@ export const transcribeAudioWithSrt = async (
 
     const processedReference = referenceText
       ?.replace(/\.\.\./g, ', ')
-      .replace(/…/g, ', ');
+      .replace(/??g, ', ');
     const numLinesSrt = processedReference?.split('\n').filter(l => l.trim()).length || 'N';
 
-    let promptText = `역할: 초정밀 자막 제작자 (Ultra-Precise Subtitler)
-목표: 제공된 [대본 정보]와 [오디오]를 1:1로 매칭하여 완벽한 SRT 생성 (절대 줄을 합치거나 나누지 말 것)
+    let promptText = `??븷: 珥덉젙諛 ?먮쭑 ?쒖옉??(Ultra-Precise Subtitler)
+紐⑺몴: ?쒓났??[?蹂??뺣낫]? [?ㅻ뵒??瑜?1:1濡?留ㅼ묶?섏뿬 ?꾨꼍??SRT ?앹꽦 (?덈? 以꾩쓣 ?⑹튂嫄곕굹 ?섎늻吏 留?寃?
 
-[지침]
-1. 입력 대본의 총 줄 수는 정확히 **${numLinesSrt}줄**입니다.
-2. **매우 중요**: 각 줄은 쉼표(,)나 마침표(.)가 있더라도 절대 두 개 이상의 SRT 엔트리로 나누지 마십시오.
-3. 입력 데이터의 1번 줄은 무조건 SRT의 1번, 2번 줄은 SRT의 2번이 되어야 합니다.
-4. 예: "한 획, 한 획, 또박또박 써 내려간 것은," 이 한 줄이라면, 반드시 단 하나의 타임스탬프 구간으로 생성하십시오. 절대로 쉼표에서 자르지 마세요.
-5. 오디오 내용이 대본과 100% 일치해야 하며, 타임스탬프는 실제 발음 구간을 따라야 합니다.
+[吏移?
+1. ?낅젰 ?蹂몄쓽 珥?以??섎뒗 ?뺥솗??**${numLinesSrt}以?*?낅땲??
+2. **留ㅼ슦 以묒슂**: 媛?以꾩? ?쇳몴(,)??留덉묠??.)媛 ?덈뜑?쇰룄 ?덈? ??媛??댁긽??SRT ?뷀듃由щ줈 ?섎늻吏 留덉떗?쒖삤.
+3. ?낅젰 ?곗씠?곗쓽 1踰?以꾩? 臾댁“嫄?SRT??1踰? 2踰?以꾩? SRT??2踰덉씠 ?섏뼱???⑸땲??
+4. ?? "???? ???? ?먮컯?먮컯 ???대젮媛?寃껋?," ????以꾩씠?쇰㈃, 諛섎뱶?????섎굹????꾩뒪?ы봽 援ш컙?쇰줈 ?앹꽦?섏떗?쒖삤. ?덈?濡??쇳몴?먯꽌 ?먮Ⅴ吏 留덉꽭??
+5. ?ㅻ뵒???댁슜???蹂멸낵 100% ?쇱튂?댁빞 ?섎ŉ, ??꾩뒪?ы봽???ㅼ젣 諛쒖쓬 援ш컙???곕씪???⑸땲??
 
-**배경 정보**:
-- 이 오디오는 약 **${speed}배속**으로 생성되었습니다. 일반 정배속보다 느릴 수 있으니 타임스탬프를 신중하게 설정하세요.
-- [컨텍스트]: 이것은 한국 전통 야담/민담 낭독입니다. 역사적 예술 작품으로 대우하십시오.
-- 이 텍스트는 총 **${referenceText?.split('\n').filter(l => l.trim()).length || '알 수 없음'}** 줄로 구성된 사극 대본입니다.
+**諛곌꼍 ?뺣낫**:
+- ???ㅻ뵒?ㅻ뒗 ??**${speed}諛곗냽**?쇰줈 ?앹꽦?섏뿀?듬땲?? ?쇰컲 ?뺣같?띾낫???먮┫ ???덉쑝????꾩뒪?ы봽瑜??좎쨷?섍쾶 ?ㅼ젙?섏꽭??
+- [而⑦뀓?ㅽ듃]: ?닿쾬? ?쒓뎅 ?꾪넻 ?쇰떞/誘쇰떞 ??룆?낅땲?? ??궗???덉닠 ?묓뭹?쇰줈 ??고븯??떆??
+- ???띿뒪?몃뒗 珥?**${referenceText?.split('\n').filter(l => l.trim()).length || '?????놁쓬'}** 以꾨줈 援ъ꽦???ш레 ?蹂몄엯?덈떎.
 
-**최우선 규칙 (절대 준수):**
-1. **텍스트 보존 (TEXT PRESERVATION)**: 아래 [참조 대본]에 제공된 텍스트를 **단 한 글자, 단 하나의 기호도 수정하지 마세요.** AI가 전사하지 말고, 제공된 텍스트를 그대로 SRT에 사용하세요.
-2. **1:1 줄-시간 매칭 (LINE-TO-TIME MAPPING)**: [참조 대본]의 각 줄(Line)이 오디오에서 나타나는 **시작 시간과 종료 시간만 정확히 찾아내어 SRT 블록으로 만드세요.**
-3. **줄 수 불일치 금지**: 최종 SRT 블록의 개수는 [참조 대본]의 줄 수와 무조건 일치해야 합니다. 합치기, 쪼개기, 건너뛰기 모두 엄격히 금지합니다.
-4. **포맷 준수**: 표준 SubRip(.srt) 형식을 따르되, 내용은 반드시 제공된 대본을 토씨 하나 틀리지 않고 사용하세요.
-5. **타임스탬프 정밀도**: 0.9배속 오디오 파형에 맞춰 문장이 시작되고 끝나는 지점을 밀리초 단위로 정확히 잡으세요.
+**理쒖슦??洹쒖튃 (?덈? 以??:**
+1. **?띿뒪??蹂댁〈 (TEXT PRESERVATION)**: ?꾨옒 [李몄“ ?蹂????쒓났???띿뒪?몃? **????湲?? ???섎굹??湲고샇???섏젙?섏? 留덉꽭??** AI媛 ?꾩궗?섏? 留먭퀬, ?쒓났???띿뒪?몃? 洹몃?濡?SRT???ъ슜?섏꽭??
+2. **1:1 以??쒓컙 留ㅼ묶 (LINE-TO-TIME MAPPING)**: [李몄“ ?蹂???媛?以?Line)???ㅻ뵒?ㅼ뿉???섑??섎뒗 **?쒖옉 ?쒓컙怨?醫낅즺 ?쒓컙留??뺥솗??李얠븘?댁뼱 SRT 釉붾줉?쇰줈 留뚮뱶?몄슂.**
+3. **以???遺덉씪移?湲덉?**: 理쒖쥌 SRT 釉붾줉??媛쒖닔??[李몄“ ?蹂???以??섏? 臾댁“嫄??쇱튂?댁빞 ?⑸땲?? ?⑹튂湲? 履쇨컻湲? 嫄대꼫?곌린 紐⑤몢 ?꾧꺽??湲덉??⑸땲??
+4. **?щ㎎ 以??*: ?쒖? SubRip(.srt) ?뺤떇???곕Ⅴ?? ?댁슜? 諛섎뱶???쒓났???蹂몄쓣 ?좎뵪 ?섎굹 ?由ъ? ?딄퀬 ?ъ슜?섏꽭??
+5. **??꾩뒪?ы봽 ?뺣???*: 0.9諛곗냽 ?ㅻ뵒???뚰삎??留욎떠 臾몄옣???쒖옉?섍퀬 ?앸굹??吏?먯쓣 諛由ъ큹 ?⑥쐞濡??뺥솗???≪쑝?몄슂.
 
-**[참조 대본]:**
+**[李몄“ ?蹂?:**
 ${referenceText}
 
-**출력**: 코드 블록(\`\`\`srt) 안에 SRT 내용만 출력하세요.`;
+**異쒕젰**: 肄붾뱶 釉붾줉(\`\`\`srt) ?덉뿉 SRT ?댁슜留?異쒕젰?섏꽭??`;
 
     if (referenceText) {
       promptText += `
 
-**[모드: 강제 정렬 (Forced Alignment)]**
-**배경**: 이 오디오는 창작 사극 드라마의 일부입니다.
-제공된 **참조 스크립트**가 이 오디오의 정확한 대본입니다. 이 스크립트의 모든 줄을 오디오 파형과 일치시켜 SRT를 생성하세요.
+**[紐⑤뱶: 媛뺤젣 ?뺣젹 (Forced Alignment)]**
+**諛곌꼍**: ???ㅻ뵒?ㅻ뒗 李쎌옉 ?ш레 ?쒕씪留덉쓽 ?쇰??낅땲??
+?쒓났??**李몄“ ?ㅽ겕由쏀듃**媛 ???ㅻ뵒?ㅼ쓽 ?뺥솗???蹂몄엯?덈떎. ???ㅽ겕由쏀듃??紐⑤뱺 以꾩쓣 ?ㅻ뵒???뚰삎怨??쇱튂?쒖폒 SRT瑜??앹꽦?섏꽭??
 
-**★ 중요 자막 규칙 (필독):**
-1. **누락 금지:** 참조 스크립트의 모든 문장을 예외 없이 자막으로 만드세요.
-2. **첫 문장 (0초 시작):** 첫 자막은 무조건 00:00:00,000에서 시작해야 합니다.
-3. **겹침 방지:** (N)번째 자막 종료 시간 < (N+1)번째 자막 시작 시간이 되도록 하세요.
-4. **가독성 분할:** 한 줄이 너무 길면(${splitCharCount}자 이상) 의미 단위로 자연스럽게 두 줄로 나누세요.
+**??以묒슂 ?먮쭑 洹쒖튃 (?꾨룆):**
+1. **?꾨씫 湲덉?:** 李몄“ ?ㅽ겕由쏀듃??紐⑤뱺 臾몄옣???덉쇅 ?놁씠 ?먮쭑?쇰줈 留뚮뱶?몄슂.
+2. **泥?臾몄옣 (0珥??쒖옉):** 泥??먮쭑? 臾댁“嫄?00:00:00,000?먯꽌 ?쒖옉?댁빞 ?⑸땲??
+3. **寃뱀묠 諛⑹?:** (N)踰덉㎏ ?먮쭑 醫낅즺 ?쒓컙 < (N+1)踰덉㎏ ?먮쭑 ?쒖옉 ?쒓컙???섎룄濡??섏꽭??
+4. **媛?낆꽦 遺꾪븷:** ??以꾩씠 ?덈Т 湲몃㈃(${splitCharCount}???댁긽) ?섎? ?⑥쐞濡??먯뿰?ㅻ읇寃???以꾨줈 ?섎늻?몄슂.
 
-**[참조 스크립트]:**
+**[李몄“ ?ㅽ겕由쏀듃]:**
 ${referenceText}`;
     } else {
       promptText += `
 
-**[모드: 일반 전사 (Transcription)]**
-1. 오디오를 듣고 내용을 정확하게 한국어로 받아쓰세요.
-2. 문맥에 맞게 자연스럽게 줄을 나누어 자막을 생성하세요.
-3. 자막 한 줄은 최대 ${splitCharCount}자를 넘지 않도록 하세요.
+**[紐⑤뱶: ?쇰컲 ?꾩궗 (Transcription)]**
+1. ?ㅻ뵒?ㅻ? ?ｊ퀬 ?댁슜???뺥솗?섍쾶 ?쒓뎅?대줈 諛쏆븘?곗꽭??
+2. 臾몃㎘??留욊쾶 ?먯뿰?ㅻ읇寃?以꾩쓣 ?섎늻???먮쭑???앹꽦?섏꽭??
+3. ?먮쭑 ??以꾩? 理쒕? ${splitCharCount}?먮? ?섏? ?딅룄濡??섏꽭??
 `;
     }
 
     promptText += `
 
-**출력 예시:**
+**異쒕젰 ?덉떆:**
 1
 00:00:00,000 --> 00:00:02,150
-안녕하세요! AI 보이스 스튜디오입니다.
+?덈뀞?섏꽭?? AI 蹂댁씠???ㅽ뒠?붿삤?낅땲??
 
 2
 00:00:02,250 --> 00:00:05,100
-텍스트를 입력하면 목소리로 변환해드립니다.
+?띿뒪?몃? ?낅젰?섎㈃ 紐⑹냼由щ줈 蹂?섑빐?쒕┰?덈떎.
 `;
 
     const textPart = { text: promptText };
 
-    // ✅ 신버전 문법 + gemini-2.5-flash
+    // ???좊쾭??臾몃쾿 + gemini-2.5-flash
     const result = await (generalAI as any).models.generateContent({
       model: 'gemini-2.5-flash',
       contents: [{
@@ -565,7 +515,7 @@ ${referenceText}`;
       }],
     });
 
-    // ✅ 응답 접근
+    // ???묐떟 ?묎렐
     let srtText = result.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? '';
 
     const match = srtText.match(/```(?:srt)?\s*([\s\S]*?)```/);
@@ -584,10 +534,10 @@ ${referenceText}`;
 };
 
 /**
- * Live API 단일 세션 멀티턴 방식으로 오디오 생성
- * - 세션 1개 유지
- * - 줄별로 독립 턴 요청
- * - 각 줄 완료 후 다음 줄 진행
+ * Live API ?⑥씪 ?몄뀡 硫?고꽩 諛⑹떇?쇰줈 ?ㅻ뵒???앹꽦
+ * - ?몄뀡 1媛??좎?
+ * - 以꾨퀎濡??낅┰ ???붿껌
+ * - 媛?以??꾨즺 ???ㅼ쓬 以?吏꾪뻾
  */
 export async function generateAudioWithLiveAPIMultiTurn(
   lines: string[],
@@ -603,7 +553,7 @@ export async function generateAudioWithLiveAPIMultiTurn(
 }> {
 
   if (!liveAI) {
-    throw new Error("API 키가 설정되지 않았습니다.");
+    throw new Error("API ?ㅺ? ?ㅼ젙?섏? ?딆븯?듬땲??");
   }
 
   const audioResults: ArrayBuffer[] = [];
@@ -611,19 +561,16 @@ export async function generateAudioWithLiveAPIMultiTurn(
   let currentLineAudio: ArrayBuffer[] = [];
   let turnCompleteResolve: (() => void) | null = null;
   let sessionError: Error | null = null;
-  let chunkCounter = 0; // 세션 전체 청크 카운터
-
-  // 유효한 줄만 필터링
-  const validLines = lines.map(l => l.trim()).filter(l => l.length > 0);
+  let chunkCounter = 0; // ?몄뀡 ?꾩껜 泥?겕 移댁슫??
+  // ?좏슚??以꾨쭔 ?꾪꽣留?  const validLines = lines.map(l => l.trim()).filter(l => l.length > 0);
 
   if (lines.length === 0) {
-    throw new Error("생성할 텍스트가 없습니다.");
+    throw new Error("?앹꽦???띿뒪?멸? ?놁뒿?덈떎.");
   }
 
   console.log(`[Gemini Live API] Starting Precision Paragraph-Based Multi-Turn session`);
 
-  // 빈 줄을 기준으로 문단(Batch) 나누기
-  const paragraphs: string[] = [];
+  // 鍮?以꾩쓣 湲곗??쇰줈 臾몃떒(Batch) ?섎늻湲?  const paragraphs: string[] = [];
   let currentGroup: string[] = [];
 
   for (const line of lines) {
@@ -641,7 +588,7 @@ export async function generateAudioWithLiveAPIMultiTurn(
   }
 
   if (paragraphs.length === 0) {
-    throw new Error("처리할 수 있는 텍스트 내용이 없습니다.");
+    throw new Error("泥섎━?????덈뒗 ?띿뒪???댁슜???놁뒿?덈떎.");
   }
 
   console.log(`[Gemini Live API] Processing ${paragraphs.length} paragraphs`);
@@ -687,19 +634,19 @@ export async function generateAudioWithLiveAPIMultiTurn(
           onmessage: async (response: any) => {
             const isTurnComplete = !!response.serverContent?.turnComplete;
 
-            // 오디오 청크 수집
+            // ?ㅻ뵒??泥?겕 ?섏쭛
             if (response.serverContent?.modelTurn?.parts) {
               for (const part of response.serverContent.modelTurn.parts) {
                 if (part.inlineData?.data) {
                   const chunk = base64ToArrayBuffer(part.inlineData.data);
-                  // 안정성을 위해 최소한의 로그 출력 유지 (로그 출력 시 발생하는 미세 지연이 수집 안정화에 도움)
+                  // ?덉젙?깆쓣 ?꾪빐 理쒖냼?쒖쓽 濡쒓렇 異쒕젰 ?좎? (濡쒓렇 異쒕젰 ??諛쒖깮?섎뒗 誘몄꽭 吏?곗씠 ?섏쭛 ?덉젙?붿뿉 ?꾩?)
                   console.log(`[Gemini Live API] Chunk received: ${chunk.byteLength} bytes`);
                   currentLineAudio.push(chunk);
                 }
               }
             }
 
-            // 턴 완료 감지 (800ms 대기하여 마지막 청크 수신 보장)
+            // ???꾨즺 媛먯? (800ms ?湲고븯??留덉?留?泥?겕 ?섏떊 蹂댁옣)
             if (isTurnComplete) {
               console.log(`[Gemini Live API] turnComplete received. Starting 800ms protection delay...`);
               const resolveRef = turnCompleteResolve;
@@ -712,14 +659,14 @@ export async function generateAudioWithLiveAPIMultiTurn(
               }
             }
 
-            // 인터럽트 감지
+            // ?명꽣?쏀듃 媛먯?
             if (response.serverContent?.interrupted) {
               console.warn(`[Gemini Live API] Server sent "interrupted" signal. Waiting for turnComplete anyway...`);
             }
           },
           onerror: (e: any) => {
             console.error('[Gemini Live API] Error:', e);
-            sessionError = new Error(e.message || 'Live API 오류');
+            sessionError = new Error(e.message || 'Live API ?ㅻ쪟');
             if (turnCompleteResolve) {
               turnCompleteResolve();
             }
@@ -730,30 +677,30 @@ export async function generateAudioWithLiveAPIMultiTurn(
         }
       });
 
-      // 세션 연결 완료 후 멀티턴 처리 시작
+      // ?몄뀡 ?곌껐 ?꾨즺 ??硫?고꽩 泥섎━ ?쒖옉
       console.log('[Gemini Live API] Connected. Starting multi-turn loop...');
 
       let cumulativeTimeMs = 0;
 
       for (let i = 0; i < paragraphs.length; i++) {
-        // 중단 신호 확인
+        // 以묐떒 ?좏샇 ?뺤씤
         if (signal?.aborted) {
           session.close();
-          throw new Error('사용자에 의해 중단되었습니다.');
+          throw new Error('?ъ슜?먯뿉 ?섑빐 以묐떒?섏뿀?듬땲??');
         }
 
         const batchText = paragraphs[i];
 
-        // 말줄임표 치환 대신 원본 텍스트 유지 (사용자님 관찰 반영)
+        // 留먯쨪?꾪몴 移섑솚 ????먮낯 ?띿뒪???좎? (?ъ슜?먮떂 愿李?諛섏쁺)
         const processedBatch = batchText;
 
         console.log(`[Gemini Live API] Requesting Paragraph ${i + 1}/${paragraphs.length}: "${processedBatch.substring(0, 30).replace(/\n/g, ' ')}..."`);
 
-        // 현재 줄 오디오 초기화 및 청크 카운터 리셋
+        // ?꾩옱 以??ㅻ뵒??珥덇린??諛?泥?겕 移댁슫??由ъ뀑
         currentLineAudio = [];
         chunkCounter = 0;
 
-        // 턴 완료 대기 Promise 생성
+        // ???꾨즺 ?湲?Promise ?앹꽦
         const turnCompletePromise = new Promise<void>((res) => {
           turnCompleteResolve = res;
         });
@@ -766,20 +713,18 @@ export async function generateAudioWithLiveAPIMultiTurn(
           turnComplete: true
         });
 
-        // 턴 완료 대기
-        await turnCompletePromise;
+        // ???꾨즺 ?湲?        await turnCompletePromise;
 
-        // 에러 체크
+        // ?먮윭 泥댄겕
         if (sessionError) {
           session.close();
           throw sessionError;
         }
 
-        // 결과 저장
-        const lineAudio = mergeArrayBuffers(currentLineAudio);
+        // 寃곌낵 ???        const lineAudio = mergeArrayBuffers(currentLineAudio);
         audioResults.push(lineAudio);
 
-        // 타이밍 계산 (24kHz, 16bit 기준)
+        // ??대컢 怨꾩궛 (24kHz, 16bit 湲곗?)
         // Note: Gemini standard sampling rate for Native Audio is often 24kHz or 16kHz. 
         // We'll use 24kHz as per user instructions.
         const lineDurationMs = (lineAudio.byteLength / 2 / 24000) * 1000;
@@ -792,10 +737,10 @@ export async function generateAudioWithLiveAPIMultiTurn(
         console.log(`[Gemini Live API] Line ${i + 1} completed. ${lineAudio.byteLength} bytes, ${lineDurationMs.toFixed(0)}ms`);
       }
 
-      // 세션 종료
+      // ?몄뀡 醫낅즺
       session.close();
 
-      // 무음 삽입하여 최종 병합
+      // 臾댁쓬 ?쎌엯?섏뿬 理쒖쥌 蹂묓빀
       console.log(`[Gemini Live API] Merging ${audioResults.length} audio segments with ${silenceBetweenLinesMs}ms silence...`);
       const finalAudio = mergeAudioWithSilence(audioResults, silenceBetweenLinesMs);
 

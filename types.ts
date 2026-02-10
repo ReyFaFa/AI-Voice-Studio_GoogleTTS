@@ -35,3 +35,12 @@ export interface Preset {
   model: string;
   speed: number;
 }
+
+// TTS 청크 개별 관리용 인터페이스
+export interface AudioChunkItem {
+  id: string;
+  index: number;
+  buffer: AudioBuffer;
+  text: string;
+  durationMs: number;
+}

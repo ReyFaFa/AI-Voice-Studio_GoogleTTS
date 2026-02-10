@@ -1,0 +1,8 @@
+{
+  "id": "1770706111955",
+  "name": "Preset-오후 3:48:31",
+  "voiceId": "Despina",
+  "stylePrompt": "Read in a calm, warm female narrator voice.\nSpeak slowly and steadily, like telling a bedtime story on a late-night radio show.\nKeep the tone gentle and soothing, suitable for listeners in their 50s-60s.\nAvoid overly dramatic expressions. Maintain subtle emotional nuance throughout.\nFor character dialogues, use only slight tonal shifts while keeping overall consistency.\nPause naturally between sentences for a relaxed listening experience.\n\n[VOICE LOCK - DO NOT DEVIATE]\nSpeaker: Calm, warm female narrator\n\n[SEGMENT CONTINUITY - CRITICAL]\nThis text is part of a longer narration.\nYou are NOT starting fresh. You are CONTINUING.\nBegin at mid-paragraph energy, not \"opening line\" energy.\nThe listener should not notice any segment boundaries.\n\n[STYLE]\nLate-night radio bedtime storytelling\nTarget audience: listeners in their 50s-60s, half-asleep, seeking comfort\nGentle and soothing throughout\nSubtle emotional nuance only - no drama\nPauses: natural breath pauses between sentences\n\n[CHARACTER DIALOGUE]\nUse only slight tonal shifts for different characters\nMaintain overall voice consistency\nNever break the calm\n\n[FORBIDDEN]\n- Pitch rise at segment start\n- Dramatic whispers or gasps\n- Overly dramatic expressions\n- Any vocal variety beyond 10% of baseline",
+  "model": "gemini-2.5-pro-preview-tts",
+  "speed": 0.8
+}

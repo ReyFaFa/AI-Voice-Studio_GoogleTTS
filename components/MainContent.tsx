@@ -11,7 +11,7 @@ import {
 import { AudioPlayer, AudioPlayerHandle } from './AudioPlayer';
 import { SilenceRemover } from './SilenceRemover';
 import { ScriptAnalysis } from './ScriptAnalysis';
-import { msToSrtTime, srtTimeToMs } from './Header';
+import { msToSrtTime, srtTimeToMs, encodeAudioBufferToWavBlob } from './Header';
 import { DIALOGUE_STYLES } from '../constants';
 
 export interface MainContentProps {
@@ -20,6 +20,8 @@ export interface MainContentProps {
     setSingleSpeakerVoice: (voice: string) => void;
     speechSpeed: number;
     setSpeechSpeed: (speed: number) => void;
+    toneLevel: number;
+    setToneLevel: (level: number) => void;
     voices: Voice[];
     onPreviewVoice: (voiceId: string) => void;
     isPreviewLoading: Record<string, boolean>;
@@ -82,6 +84,14 @@ export interface MainContentProps {
     setIsTimestampSyncEnabled: (enabled: boolean) => void;
     isAnalysisPanelOpen: boolean;
     setIsAnalysisPanelOpen: (isOpen: boolean | ((prev: boolean) => boolean)) => void;
+    onDownloadChunksAsZip: (targetId?: string) => void;
+    // Sample Preview Props
+    sampleAudio: { src: string; text: string } | null;
+    sampleLoading: boolean;
+    onGenerateSample: () => void;
+    onApproveSample: () => void;
+    onRejectSample: () => void;
+    onRegenerateChunk: (audioItemId: string, chunkIndex: number) => void;
 }
 
 interface ScriptEditorProps {
@@ -277,7 +287,7 @@ const ScriptEditor: React.FC<ScriptEditorProps> = ({
 };
 
 export const MainContent: React.FC<MainContentProps> = ({
-    singleSpeakerVoice, setSingleSpeakerVoice, speechSpeed, setSpeechSpeed, voices, onPreviewVoice, isPreviewLoading,
+    singleSpeakerVoice, setSingleSpeakerVoice, speechSpeed, setSpeechSpeed, toneLevel, setToneLevel, voices, onPreviewVoice, isPreviewLoading,
     srtSplitCharCount, setSrtSplitCharCount,
     // New Props
     selectedModel, setSelectedModel, stylePrompt, setStylePrompt, favorites, toggleFavorite,
@@ -324,6 +334,13 @@ export const MainContent: React.FC<MainContentProps> = ({
     setIsTimestampSyncEnabled,
     isAnalysisPanelOpen,
     setIsAnalysisPanelOpen,
+    onDownloadChunksAsZip,
+    sampleAudio,
+    sampleLoading,
+    onGenerateSample,
+    onApproveSample,
+    onRejectSample,
+    onRegenerateChunk,
 }) => {
     const [srtMode, setSrtMode] = useState<'chapter' | 'edit'>('chapter');
     const [isAutoScrollEnabled, setIsAutoScrollEnabled] = useState(true);
@@ -346,6 +363,31 @@ export const MainContent: React.FC<MainContentProps> = ({
     useEffect(() => {
         setLocalSplitCount(srtSplitCharCount.toString());
     }, [srtSplitCharCount]);
+
+    const [expandedChunks, setExpandedChunks] = useState(false);
+    const [playingChunkId, setPlayingChunkId] = useState<string | null>(null);
+    const chunkAudioRef = useRef<HTMLAudioElement | null>(null);
+
+    const handlePlayChunk = useCallback((chunk: any) => {
+        if (playingChunkId === chunk.id) {
+            chunkAudioRef.current?.pause();
+            setPlayingChunkId(null);
+            return;
+        }
+        const wavBlob = encodeAudioBufferToWavBlob(chunk.buffer);
+        const url = URL.createObjectURL(wavBlob);
+        if (chunkAudioRef.current) {
+            chunkAudioRef.current.pause();
+        }
+        const audio = new Audio(url);
+        audio.onended = () => {
+            setPlayingChunkId(null);
+            URL.revokeObjectURL(url);
+        };
+        audio.play();
+        chunkAudioRef.current = audio;
+        setPlayingChunkId(chunk.id);
+    }, [playingChunkId]);
 
     // Reset page to 1 (latest) when new audio is generated.
     // Use the ID of the first item to detect new insertions at the top.
@@ -690,20 +732,65 @@ export const MainContent: React.FC<MainContentProps> = ({
 
                             {/* 2. Voice & Speed Selection */}
                             <div className="flex flex-col gap-3 pt-2 border-t border-gray-700">
-                                <div className="flex justify-between items-center">
+                                <div className="flex justify-between items-center gap-2">
                                     <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">음성 선택</label>
-                                    <div className="flex items-center gap-2 bg-gray-700/30 px-2 py-1 rounded-full border border-gray-600/50">
-                                        <span className="text-xs text-gray-400 font-medium">속도</span>
-                                        <input
-                                            type="range"
-                                            min="0.5"
-                                            max="2.0"
-                                            step="0.1"
-                                            value={speechSpeed}
-                                            onChange={(e) => handleSpeedChange(parseFloat(e.target.value))}
-                                            className="w-16 h-1 bg-gray-600 rounded-lg appearance-none cursor-pointer accent-indigo-500 hover:accent-indigo-400 transition-all"
-                                        />
-                                        <span className="text-xs font-mono font-bold text-indigo-400 w-8 text-right">{speechSpeed.toFixed(1)}x</span>
+                                    <div className="flex items-center gap-2">
+                                        {/* Tone Control */}
+                                        <div className="flex items-center gap-1 bg-gray-700/30 px-2 py-1 rounded-full border border-gray-600/50">
+                                            <span className="text-xs text-gray-400 font-medium">톤</span>
+                                            <button
+                                                onClick={() => setToneLevel(Math.max(1, toneLevel - 1))}
+                                                className="w-5 h-5 flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-600 rounded transition-colors text-xs font-bold"
+                                                title="톤 낮추기"
+                                            >
+                                                ◀
+                                            </button>
+                                            <input
+                                                type="range"
+                                                min="1"
+                                                max="5"
+                                                step="1"
+                                                value={toneLevel}
+                                                onChange={(e) => setToneLevel(parseInt(e.target.value))}
+                                                className="w-10 h-1 bg-gray-600 rounded-lg appearance-none cursor-pointer accent-purple-500 hover:accent-purple-400 transition-all"
+                                            />
+                                            <button
+                                                onClick={() => setToneLevel(Math.min(5, toneLevel + 1))}
+                                                className="w-5 h-5 flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-600 rounded transition-colors text-xs font-bold"
+                                                title="톤 높이기"
+                                            >
+                                                ▶
+                                            </button>
+                                            <span className="text-xs font-mono font-bold text-purple-400 w-4 text-right">{toneLevel}</span>
+                                        </div>
+                                        {/* Speed Control */}
+                                        <div className="flex items-center gap-1 bg-gray-700/30 px-2 py-1 rounded-full border border-gray-600/50">
+                                            <span className="text-xs text-gray-400 font-medium">속도</span>
+                                            <button
+                                                onClick={() => handleSpeedChange(Math.max(0.5, speechSpeed - 0.1))}
+                                                className="w-5 h-5 flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-600 rounded transition-colors text-xs font-bold"
+                                                title="속도 감소"
+                                            >
+                                                ◀
+                                            </button>
+                                            <input
+                                                type="range"
+                                                min="0.5"
+                                                max="2.0"
+                                                step="0.1"
+                                                value={speechSpeed}
+                                                onChange={(e) => handleSpeedChange(parseFloat(e.target.value))}
+                                                className="w-12 h-1 bg-gray-600 rounded-lg appearance-none cursor-pointer accent-indigo-500 hover:accent-indigo-400 transition-all"
+                                            />
+                                            <button
+                                                onClick={() => handleSpeedChange(Math.min(2.0, speechSpeed + 0.1))}
+                                                className="w-5 h-5 flex items-center justify-center text-gray-400 hover:text-white hover:bg-gray-600 rounded transition-colors text-xs font-bold"
+                                                title="속도 증가"
+                                            >
+                                                ▶
+                                            </button>
+                                            <span className="text-xs font-mono font-bold text-indigo-400 w-8 text-right">{speechSpeed.toFixed(1)}x</span>
+                                        </div>
                                     </div>
                                 </div>
                                 <div className="flex gap-2">
@@ -785,17 +872,68 @@ export const MainContent: React.FC<MainContentProps> = ({
                                             <span>중지</span>
                                         </button>
                                     ) : (
-                                        <button
-                                            onClick={onGenerateAudio}
-                                            disabled={!singleSpeakerVoice || scriptLines.every(l => !l.text.trim())}
-                                            className="flex items-center justify-center gap-2 bg-indigo-600 text-white text-xs font-bold py-2 px-3 rounded-md hover:bg-indigo-700 disabled:bg-gray-600 disabled:cursor-not-allowed transition-colors"
-                                        >
-                                            <SparklesIcon className="w-4 h-4" />
-                                            <span>생성</span>
-                                        </button>
+                                        <>
+                                            <button
+                                                onClick={onGenerateSample}
+                                                disabled={!singleSpeakerVoice || scriptLines.every(l => !l.text.trim()) || sampleLoading}
+                                                className="flex items-center justify-center gap-2 bg-gray-700 text-white text-xs font-semibold py-2 px-3 rounded-md hover:bg-gray-600 disabled:bg-gray-600 disabled:cursor-not-allowed transition-colors"
+                                                title="처음 5줄 미리듣기"
+                                            >
+                                                <PlayIcon className="w-4 h-4" />
+                                                <span>샘플</span>
+                                            </button>
+                                            <button
+                                                onClick={onGenerateAudio}
+                                                disabled={!singleSpeakerVoice || scriptLines.every(l => !l.text.trim())}
+                                                className="flex items-center justify-center gap-2 bg-indigo-600 text-white text-xs font-bold py-2 px-3 rounded-md hover:bg-indigo-700 disabled:bg-gray-600 disabled:cursor-not-allowed transition-colors"
+                                            >
+                                                <SparklesIcon className="w-4 h-4" />
+                                                <span>생성</span>
+                                            </button>
+                                        </>
                                     )}
                                 </div>
                             </div>
+
+                            {/* Sample Preview Section */}
+                            {(sampleLoading || sampleAudio) && (
+                                <div className="mt-3 p-3 bg-gradient-to-r from-indigo-900/30 to-purple-900/30 border border-indigo-500/30 rounded-lg">
+                                    <div className="flex items-center justify-between mb-2">
+                                        <h4 className="text-sm font-semibold text-indigo-300">🎧 샘플 미리듣기</h4>
+                                        {sampleAudio && (
+                                            <button onClick={onRejectSample} className="text-gray-400 hover:text-white p-1">
+                                                <XCircleIcon className="w-4 h-4" />
+                                            </button>
+                                        )}
+                                    </div>
+
+                                    {sampleLoading ? (
+                                        <div className="flex items-center gap-2 text-gray-300 text-sm">
+                                            <div className="w-4 h-4 border-2 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
+                                            <span>샘플 생성 중...</span>
+                                        </div>
+                                    ) : sampleAudio && (
+                                        <div className="space-y-2">
+                                            <audio src={sampleAudio.src} controls className="w-full h-8" />
+                                            <p className="text-xs text-gray-400 line-clamp-2">{sampleAudio.text}</p>
+                                            <div className="flex gap-2">
+                                                <button
+                                                    onClick={onApproveSample}
+                                                    className="flex-1 py-1.5 text-xs font-semibold bg-green-600 hover:bg-green-700 text-white rounded-md transition-colors"
+                                                >
+                                                    ✓ 이 목소리로 전체 생성
+                                                </button>
+                                                <button
+                                                    onClick={onRejectSample}
+                                                    className="flex-1 py-1.5 text-xs font-semibold bg-gray-600 hover:bg-gray-500 text-white rounded-md transition-colors"
+                                                >
+                                                    ✗ 다른 설정 시도
+                                                </button>
+                                            </div>
+                                        </div>
+                                    )}
+                                </div>
+                            )}
                         </div>
 
                         {/* Script Editor expands to fill space */}
@@ -862,6 +1000,57 @@ export const MainContent: React.FC<MainContentProps> = ({
                                     setActiveSrtLineId={handlePlayerActiveLineUpdate}
                                 />
                                 {silentSegments.length > 0 && <SilenceRemover segments={silentSegments} onRemove={onRemoveSilenceSegments} />}
+
+                                {/* Chunk Management Section */}
+                                {currentAudioItem?.audioChunks && currentAudioItem.audioChunks.length > 1 && (
+                                    <div className="mt-3 bg-gray-800/50 rounded-lg border border-gray-700/50">
+                                        <button
+                                            onClick={() => setExpandedChunks(!expandedChunks)}
+                                            className="w-full flex items-center justify-between px-3 py-2 text-sm text-gray-300 hover:text-white hover:bg-gray-700/30 rounded-lg transition-colors"
+                                        >
+                                            <span className="flex items-center gap-2">
+                                                <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" /></svg>
+                                                청크 관리 ({currentAudioItem.audioChunks.length}개 구간)
+                                            </span>
+                                            <svg className={`w-4 h-4 transition-transform ${expandedChunks ? 'rotate-180' : ''}`} fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" /></svg>
+                                        </button>
+                                        {expandedChunks && (
+                                            <div className="px-3 pb-3 space-y-2 max-h-60 overflow-y-auto">
+                                                {currentAudioItem.audioChunks.map((chunk, idx) => (
+                                                    <div key={chunk.id} className="flex items-center gap-2 p-2 bg-gray-900/50 rounded-md border border-gray-700/30 hover:border-gray-600/50 transition-colors">
+                                                        <span className="text-xs font-mono text-gray-500 w-6 text-center flex-shrink-0">{idx + 1}</span>
+                                                        <p className="text-xs text-gray-400 flex-grow truncate" title={chunk.text}>
+                                                            {chunk.text.substring(0, 80)}{chunk.text.length > 80 ? '...' : ''}
+                                                        </p>
+                                                        <span className="text-xs text-gray-500 flex-shrink-0">
+                                                            {Math.round(chunk.durationMs / 1000)}s
+                                                        </span>
+                                                        <button
+                                                            onClick={() => handlePlayChunk(chunk)}
+                                                            disabled={isLoading}
+                                                            className="p-1 text-gray-400 hover:text-indigo-400 disabled:opacity-30 transition-colors flex-shrink-0"
+                                                            title="이 구간 재생"
+                                                        >
+                                                            {playingChunkId === chunk.id ? (
+                                                                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><rect x="6" y="4" width="4" height="16" /><rect x="14" y="4" width="4" height="16" /></svg>
+                                                            ) : (
+                                                                <svg className="w-4 h-4" fill="currentColor" viewBox="0 0 24 24"><path d="M8 5v14l11-7z" /></svg>
+                                                            )}
+                                                        </button>
+                                                        <button
+                                                            onClick={() => onRegenerateChunk(currentAudioItem.id, idx)}
+                                                            disabled={isLoading}
+                                                            className="p-1 text-gray-400 hover:text-amber-400 disabled:opacity-30 transition-colors flex-shrink-0"
+                                                            title="이 구간 재생성"
+                                                        >
+                                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                                                        </button>
+                                                    </div>
+                                                ))}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
                             </div>
                         )}
 
@@ -909,6 +1098,14 @@ export const MainContent: React.FC<MainContentProps> = ({
                                         </label>
                                         <button onClick={handleCopySrt} title="SRT 복사" className="p-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded-md"><ClipboardIcon className="w-5 h-5" /></button>
                                         <button onClick={handleDownloadSrt} title="SRT 다운로드" className="p-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded-md"><DownloadIcon className="w-5 h-5" /></button>
+                                        <button
+                                            onClick={() => onDownloadChunksAsZip()}
+                                            title="청크별 오디오 ZIP 다운로드"
+                                            disabled={!currentAudioItem?.audioChunks?.length}
+                                            className="p-2 text-gray-400 hover:text-white hover:bg-gray-700 rounded-md disabled:opacity-30 disabled:hover:bg-transparent disabled:cursor-not-allowed"
+                                        >
+                                            <span className="text-xs font-bold">ZIP</span>
+                                        </button>
                                     </div>
                                 </div>
 
