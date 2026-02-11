@@ -1,26 +1,25 @@
 
-import React, { useState, useCallback, useEffect, useRef, useMemo } from 'react';
-import { ScriptLine, SrtLine, Preset, AudioChunkItem } from './types';
-import { VOICES, LANGUAGES, XCircleIcon, SettingsIcon, MicrophoneIcon, DocumentTextIcon } from './constants';
-import { generateSingleSpeakerAudio, generateAudioWithLiveAPIMultiTurn, generateSrtFromParagraphTimings, uint8ArrayToBase64, previewVoice, transcribeAudioWithSrt, setApiKey } from './services/geminiService';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import {
+    adjustSrtGaps,
+    analyzeScript,
+    audioBufferToWavBase64,
+    createWavBlobFromBase64Pcm,
+    detectSilence,
+    downloadChunksAsZip,
+    encodeAudioBufferToWavBlob,
+    msToSrtTime,
+    parseSrt,
+    spliceAudio,
+    splitTextIntoChunks,
+    srtTimeToMs,
+    stringifySrt
+} from './components/Header';
 import { MainContent } from './components/MainContent';
 import { SubtitleGenerator } from './components/SubtitleGenerator';
-import {
-    createWavBlobFromBase64Pcm,
-    encodeAudioBufferToWavBlob,
-    sliceAudioBuffer,
-    analyzeScript,
-    msToSrtTime,
-    stringifySrt,
-    audioBufferToWavBase64,
-    parseSrt,
-    adjustSrtGaps,
-    srtTimeToMs,
-    spliceAudio,
-    detectSilence,
-    splitTextIntoChunks,
-    downloadChunksAsZip
-} from './components/Header';
+import { DocumentTextIcon, MicrophoneIcon, SettingsIcon, VOICES, XCircleIcon } from './constants';
+import { generateAudioWithLiveAPIMultiTurn, generateSingleSpeakerAudio, generateSrtFromParagraphTimings, previewVoice, setApiKey, transcribeAudioWithSrt, uint8ArrayToBase64 } from './services/geminiService';
+import { AudioChunkItem, Preset, ScriptLine, SrtLine } from './types';
 
 // Defines the structure for each generated audio clip in the history
 export interface AudioHistoryItem {
@@ -513,7 +512,7 @@ export function App() {
 
             } else {
                 // --- LEGACY STRATEGY: Standard Chunk-based TTS + Transcription ---
-                const textChunks = splitTextIntoChunks(fullText, 5000, 100);
+                const textChunks = splitTextIntoChunks(fullText, 2500, 50);
                 const totalChunks = textChunks.length;
 
                 let mergedAudioBuffer: AudioBuffer | null = null;
@@ -708,6 +707,68 @@ export function App() {
             abortControllerRef.current = null;
         }
     };
+
+    // CapCut 연동: 스크립트 → 자막 영역 복사
+    const handleCopyScriptToSrt = useCallback((srtLines: SrtLine[]) => {
+        // editableSrtLines 업데이트
+        setEditableSrtLines(srtLines);
+
+        // originalSrtLines도 업데이트 (리셋 기준점)
+        setOriginalSrtLines(JSON.parse(JSON.stringify(srtLines)));
+
+        // srtContent 생성
+        const srtContent = stringifySrt(srtLines);
+
+        // ttsResult 업데이트 (srtContent)
+        setTtsResult(prev => ({
+            ...prev,
+            srtContent: srtContent
+        }));
+
+        // hasTimestampEdits 초기화
+        setHasTimestampEdits(false);
+
+        console.log('[CapCut Sync] 스크립트 복사 완료:', srtLines.length, '라인');
+    }, []);
+
+    // CapCut SRT 업로드: 타임코드 매칭
+    const handleUpdateSrtFromCapCut = useCallback((matchedSrtLines: SrtLine[]) => {
+        // editableSrtLines 업데이트
+        setEditableSrtLines(matchedSrtLines);
+
+        // originalSrtLines도 업데이트
+        setOriginalSrtLines(JSON.parse(JSON.stringify(matchedSrtLines)));
+
+        // srtContent 생성
+        const srtContent = stringifySrt(matchedSrtLines);
+
+        // ttsResult 업데이트
+        setTtsResult(prev => ({
+            ...prev,
+            srtContent: srtContent
+        }));
+
+        // activeAudioId가 있다면 해당 audioHistory 아이템도 업데이트
+        if (activeAudioId) {
+            setTtsResult(prev => ({
+                ...prev,
+                audioHistory: prev.audioHistory.map(item =>
+                    item.id === activeAudioId
+                        ? {
+                            ...item,
+                            srtLines: matchedSrtLines,
+                            originalSrtLines: JSON.parse(JSON.stringify(matchedSrtLines))
+                        }
+                        : item
+                )
+            }));
+        }
+
+        // hasTimestampEdits 초기화
+        setHasTimestampEdits(false);
+
+        console.log('[CapCut Sync] 타임코드 매칭 완료:', matchedSrtLines.length, '라인');
+    }, [activeAudioId]);
 
     const handleClearAudioHistory = () => {
         ttsResult.audioHistory.forEach(item => URL.revokeObjectURL(item.src));
@@ -1315,6 +1376,8 @@ export function App() {
                         onApproveSample={handleApproveSampleAndGenerate}
                         onRejectSample={handleRejectSample}
                         onRegenerateChunk={handleRegenerateChunk}
+                        onCopyScriptToSrt={handleCopyScriptToSrt}
+                        onUpdateSrtFromCapCut={handleUpdateSrtFromCapCut}
                     />
                 ) : (
                     <SubtitleGenerator />

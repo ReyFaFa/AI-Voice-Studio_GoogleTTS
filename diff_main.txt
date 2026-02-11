@@ -1,0 +1,13 @@
+﻿diff --git a/components/MainContent.tsx b/components/MainContent.tsx
+index 5806cd7..b2ef9a8 100644
+--- a/components/MainContent.tsx
++++ b/components/MainContent.tsx
+@@ -1054,7 +1054,7 @@ export const MainContent: React.FC<MainContentProps> = ({
+                             </div>
+                         )}
+ 
+-                        {(isLoading && loadingStatus.includes('?먮쭑')) ? (
++                        {(isLoading) ? (
+                             <div className="flex-grow bg-gray-800 rounded-lg shadow-inner flex flex-col items-center justify-start pt-16 border border-gray-700/50">
+                                 <div className="relative w-20 h-20 mb-6">
+                                     <div className="absolute top-0 left-0 w-full h-full border-4 border-indigo-500/30 rounded-full"></div>

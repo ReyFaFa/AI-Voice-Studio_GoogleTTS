@@ -1,0 +1,81 @@
+﻿diff --git a/App.tsx b/App.tsx
+index d7c4399..46b7894 100644
+--- a/App.tsx
++++ b/App.tsx
+@@ -513,7 +513,8 @@ export function App() {
+ 
+             } else {
+                 // --- LEGACY STRATEGY: Standard Chunk-based TTS + Transcription ---
+-                const textChunks = splitTextIntoChunks(fullText, 5000, 100);
++                // [Modified] Reduced chunk size from 5000 -> 2500 for better stability & context retention
++                const textChunks = splitTextIntoChunks(fullText, 2500, 100);
+                 const totalChunks = textChunks.length;
+ 
+                 let mergedAudioBuffer: AudioBuffer | null = null;
+@@ -550,23 +551,49 @@ export function App() {
+                         const chunkBlob = createWavBlobFromBase64Pcm(base64Pcm);
+                         const chunkBuffer = await audioContext.decodeAudioData(await chunkBlob.arrayBuffer());
+ 
+-                        // Step 3: Direct Script-to-SRT Mapping (No AI transcription)
+-                        const inputLines = chunkText.split('\n').filter(line => line.trim().length > 0);
+-                        const totalDurationMs = chunkBuffer.duration * 1000;
+-                        const avgLineDurationMs = totalDurationMs / inputLines.length;
+-
+-                        const parsedChunkSrt: SrtLine[] = inputLines.map((line, idx) => {
+-                            const lineStartMs = idx * avgLineDurationMs;
+-                            const lineEndMs = (idx + 1) * avgLineDurationMs;
+-                            const globalIndex = allParsedSrt.length + idx + 1;
+-                            return {
+-                                id: `srt-${globalIndex}-${Date.now()}`,
+-                                index: globalIndex,
+-                                startTime: msToSrtTime(lineStartMs),
+-                                endTime: msToSrtTime(lineEndMs),
+-                                text: line
+-                            };
+-                        });
++                        // Step 3: [NEW] Auto-Alignment (Reverse Transcription)
++                        // Instead of simple 1/N calculation, we use the AI to force align the text to audio.
++                        setLoadingStatus(`?먮쭑 ?뺣? ?깊겕 留욎텛??以?(${i + 1}/${totalChunks})...`);
++
++                        let parsedChunkSrt: SrtLine[] = [];
++
++                        try {
++                            // Convert chunkBuffer to WAV base64 for transcription
++                            const wavBase64 = await audioBufferToWavBase64(chunkBuffer);
++
++                            // Call transcribeAudioWithSrt with referenceText (Forced Alignment Mode)
++                            // This uses the "Strict" safety settings issue fixed previously (now BLOCK_NONE)
++                            const srtText = await transcribeAudioWithSrt(
++                                wavBase64,
++                                50, // char limit per line for SRT
++                                abortControllerRef.current.signal,
++                                chunkText, // reference text for forced alignment
++                                speechSpeed
++                            );
++
++                            parsedChunkSrt = parseSrt(srtText);
++                            console.log(`[Auto-Align] Chunk ${i + 1} aligned successfully. Lines: ${parsedChunkSrt.length}`);
++
++                        } catch (alignError) {
++                            console.warn(`[Auto-Align] Failed for chunk ${i + 1}, falling back to linear alignment.`, alignError);
++                            // Fallback to linear alignment if auto-align fails
++                            const inputLines = chunkText.split('\n').filter(line => line.trim().length > 0);
++                            const totalDurationMs = chunkBuffer.duration * 1000;
++                            const avgLineDurationMs = totalDurationMs / inputLines.length;
++
++                            parsedChunkSrt = inputLines.map((line, idx) => {
++                                const lineStartMs = idx * avgLineDurationMs;
++                                const lineEndMs = (idx + 1) * avgLineDurationMs;
++                                const globalIndex = allParsedSrt.length + idx + 1;
++                                return {
++                                    id: `srt-${globalIndex}-${Date.now()}`,
++                                    index: globalIndex,
++                                    startTime: msToSrtTime(lineStartMs),
++                                    endTime: msToSrtTime(lineEndMs),
++                                    text: line
++                                };
++                            });
++                        }
+ 
+                         // Step 4: Apply total time offset to this chunk's timing
+                         parsedChunkSrt.forEach(line => {

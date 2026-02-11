@@ -1,0 +1,19 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(npm install:*)",
+      "Bash(test/setup.ts << 'EOF'\nimport { expect, afterEach } from 'vitest'\nimport { cleanup } from '@testing-library/react'\nimport '@testing-library/jest-dom'\n\nafterEach\\(\\(\\) => {\n  cleanup\\(\\)\n}\\)\nEOF)",
+      "Bash(components/__tests__/Header.test.tsx << 'EOF'\nimport { describe, it, expect } from 'vitest'\nimport { render, screen } from '@testing-library/react'\nimport Header from '../Header'\n\ndescribe\\('Header', \\(\\) => {\n  it\\('renders without crashing', \\(\\) => {\n    render\\(<Header />\\)\n    expect\\(screen.getByRole\\('banner'\\)\\).toBeInTheDocument\\(\\)\n  }\\)\n\n  it\\('displays the app title', \\(\\) => {\n    render\\(<Header />\\)\n    const heading = screen.getByRole\\('heading', { level: 1 }\\)\n    expect\\(heading\\).toBeInTheDocument\\(\\)\n  }\\)\n}\\)\nEOF)",
+      "Bash(npm run typecheck:*)",
+      "Bash(components/__tests__/example.test.tsx << 'EOF'\nimport { describe, it, expect } from 'vitest'\n\ndescribe\\('Example Test Suite', \\(\\) => {\n  it\\('should pass basic assertion', \\(\\) => {\n    expect\\(1 + 1\\).toBe\\(2\\)\n  }\\)\n\n  it\\('should handle string operations', \\(\\) => {\n    const greeting = 'Hello, World!'\n    expect\\(greeting\\).toContain\\('World'\\)\n  }\\)\n\n  it\\('should work with arrays', \\(\\) => {\n    const numbers = [1, 2, 3, 4, 5]\n    expect\\(numbers\\).toHaveLength\\(5\\)\n    expect\\(numbers\\).toContain\\(3\\)\n  }\\)\n}\\)\nEOF)",
+      "Bash(npm test:*)",
+      "Bash(npm run format:*)",
+      "Bash(npm run lint:*)",
+      "Bash(netstat:*)",
+      "Bash(findstr:*)",
+      "mcp__playwright__browser_navigate",
+      "mcp__playwright__browser_install",
+      "Bash(git stash push:*)"
+    ]
+  }
+}

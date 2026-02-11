@@ -1,18 +1,35 @@
 
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
-import { ScriptLine, SrtLine, Voice, Preset } from '../types';
-import { AudioHistoryItem, MAX_CHAR_LIMIT, AutoFormatOptions } from '../App';
+import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { AudioHistoryItem, AutoFormatOptions, MAX_CHAR_LIMIT } from '../App';
 import {
-    ChartBarIcon, StopIcon, SparklesIcon, ListBulletIcon, PencilIcon,
-    ClipboardIcon, DownloadIcon, LinkIcon, RefreshIcon, ScissorsIcon,
-    TrashIcon, XCircleIcon, PlusIcon, MinusIcon, StyleIcon, WrapTextIcon,
-    ArrowsUpDownIcon, ArrowUpIcon, ArrowDownIcon, PlayIcon, ChevronLeftIcon, ChevronRightIcon, ClockIcon, StarIcon, FloppyDiskIcon
+    ArrowDownIcon,
+    ArrowUpIcon,
+    ChartBarIcon,
+    ChevronLeftIcon, ChevronRightIcon,
+    ClipboardIcon,
+    DIALOGUE_STYLES,
+    DownloadIcon,
+    FloppyDiskIcon,
+    LinkIcon,
+    ListBulletIcon,
+    MinusIcon,
+    PencilIcon,
+    PlayIcon,
+    PlusIcon,
+    RefreshIcon, ScissorsIcon,
+    SparklesIcon,
+    StarIcon,
+    StopIcon,
+    StyleIcon,
+    TrashIcon,
+    WrapTextIcon,
+    XCircleIcon
 } from '../constants';
+import { Preset, ScriptLine, SrtLine, Voice } from '../types';
 import { AudioPlayer, AudioPlayerHandle } from './AudioPlayer';
-import { SilenceRemover } from './SilenceRemover';
+import { encodeAudioBufferToWavBlob, msToSrtTime, parseSrt, srtTimeToMs } from './Header';
 import { ScriptAnalysis } from './ScriptAnalysis';
-import { msToSrtTime, srtTimeToMs, encodeAudioBufferToWavBlob } from './Header';
-import { DIALOGUE_STYLES } from '../constants';
+import { SilenceRemover } from './SilenceRemover';
 
 export interface MainContentProps {
     // Voice & Settings Props
@@ -92,6 +109,9 @@ export interface MainContentProps {
     onApproveSample: () => void;
     onRejectSample: () => void;
     onRegenerateChunk: (audioItemId: string, chunkIndex: number) => void;
+    // CapCut Sync Props (NEW)
+    onCopyScriptToSrt: (srtLines: SrtLine[]) => void;
+    onUpdateSrtFromCapCut: (srtLines: SrtLine[]) => void;
 }
 
 interface ScriptEditorProps {
@@ -109,12 +129,13 @@ interface ScriptEditorProps {
     isLoading: boolean;
     loadingStatus: string;
     error: string | null;
+    onCopyToCapCutSync: () => void;
 }
 
 const ScriptEditor: React.FC<ScriptEditorProps> = ({
     scriptLines, onScriptChange, onUpdateScriptLine, onRemoveScriptLine, onAddScriptLine,
     onRemoveEmptyScriptLines, onAutoFormatScript, onMergeScriptLine, onSplitScriptLine,
-    scriptAnalysis, totalEstimatedTime, isLoading, loadingStatus, error
+    scriptAnalysis, totalEstimatedTime, isLoading, loadingStatus, error, onCopyToCapCutSync
 }) => {
     const [isAutoFormatOpen, setIsAutoFormatOpen] = useState(false);
     const [autoFormatOptions, setAutoFormatOptions] = useState<AutoFormatOptions>({
@@ -166,6 +187,14 @@ const ScriptEditor: React.FC<ScriptEditorProps> = ({
                     </h3>
                 </div>
                 <div className="flex items-center gap-2 relative">
+                    <button
+                        onClick={onCopyToCapCutSync}
+                        className="px-3 py-1.5 text-xs font-semibold text-white bg-purple-600 hover:bg-purple-700 rounded-md transition-colors flex items-center gap-1.5"
+                        title="좌측 스크립트를 우측 자막 영역으로 복사하여 CapCut 타임코드 연동 준비"
+                    >
+                        <LinkIcon className="w-3.5 h-3.5" />
+                        캡컷 타임코드 연동
+                    </button>
                     <button
                         onClick={() => setIsAutoFormatOpen(!isAutoFormatOpen)}
                         className="px-3 py-1.5 text-xs font-semibold text-gray-300 hover:text-white bg-gray-700 hover:bg-gray-600 rounded-md transition-colors flex items-center gap-1.5"
@@ -341,6 +370,8 @@ export const MainContent: React.FC<MainContentProps> = ({
     onApproveSample,
     onRejectSample,
     onRegenerateChunk,
+    onCopyScriptToSrt,
+    onUpdateSrtFromCapCut,
 }) => {
     const [srtMode, setSrtMode] = useState<'chapter' | 'edit'>('chapter');
     const [isAutoScrollEnabled, setIsAutoScrollEnabled] = useState(true);
@@ -349,6 +380,7 @@ export const MainContent: React.FC<MainContentProps> = ({
     const [presetName, setPresetName] = useState('');
     const [selectedPresetId, setSelectedPresetId] = useState<string>('');
     const fileInputRef = useRef<HTMLInputElement>(null);
+    const capCutFileInputRef = useRef<HTMLInputElement>(null);
 
     // Pagination state
     const [currentPage, setCurrentPage] = useState(1);
@@ -456,6 +488,163 @@ export const MainContent: React.FC<MainContentProps> = ({
             setIsPresetSaveOpen(false);
         }
     };
+
+    const handleCopyToCapCutSync = useCallback(() => {
+        // 1. 빈 스크립트 체크
+        const validLines = scriptLines.filter(l => l.text.trim());
+
+        if (validLines.length === 0) {
+            alert('스크립트가 비어있습니다. 먼저 좌측에 텍스트를 입력해주세요.');
+            return;
+        }
+
+        // 2. SRT 형식으로 변환 (임시 타임코드)
+        const srtLines: SrtLine[] = validLines.map((line, index) => ({
+            id: `capcutsync-${Date.now()}-${index + 1}`,
+            index: index + 1,
+            startTime: "00:00:00,000",  // 임시 플레이스홀더
+            endTime: "00:00:00,000",    // 임시 플레이스홀더
+            text: line.text
+        }));
+
+        // 3. 부모 컴포넌트(App.tsx)에 전달하여 상태 업데이트
+        onCopyScriptToSrt(srtLines);
+
+        // 4. 사용자 안내
+        alert(
+            `✅ ${srtLines.length}개 라인이 우측 자막 영역으로 복사되었습니다.\n\n` +
+            `다음 단계:\n` +
+            `1. 오디오 생성 (선택사항)\n` +
+            `2. CapCut에서 편집 후 SRT 다운로드\n` +
+            `3. 우측 상단 "CapCut SRT 업로드" 버튼으로 타임코드 매칭`
+        );
+    }, [scriptLines, onCopyScriptToSrt]);
+
+    const handleCapCutSrtUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+
+        // 파일 확장자 체크
+        if (!file.name.endsWith('.srt')) {
+            alert('❌ SRT 파일만 업로드 가능합니다.');
+            return;
+        }
+
+        // 텍스트 정규화 함수 (공백, 구두점 제거, 소문자화)
+        const normalizeText = (text: string) => {
+            return text
+                .replace(/\s+/g, '')        // 공백 제거
+                .replace(/[.,!?;:'"]/g, '') // 구두점 제거
+                .toLowerCase();              // 소문자 변환
+        };
+
+        try {
+            // 1. 파일 읽기
+            const text = await file.text();
+
+            // 2. SRT 파싱 (parseSrt 함수 사용 - 이미 존재)
+            const capCutSrt = parseSrt(text);
+
+            if (capCutSrt.length === 0) {
+                alert('❌ SRT 파일이 비어있거나 형식이 잘못되었습니다.');
+                return;
+            }
+
+            // CapCut SRT를 Map으로 변환 (O(1) 검색 성능)
+            const capCutMap = new Map<string, SrtLine>();
+            capCutSrt.forEach(line => {
+                const normalized = normalizeText(line.text);
+                capCutMap.set(normalized, line);
+            });
+
+            // 3. 현재 우측 자막과 매칭
+            const currentSrt = editableSrtLines;
+
+            if (currentSrt.length === 0) {
+                alert('❌ 먼저 "캡컷 타임코드 연동" 버튼을 클릭하여 스크립트를 복사해주세요.');
+                return;
+            }
+
+            // 4. 텍스트 기반 매칭 + 누락 감지
+            const matchedSrt: SrtLine[] = [];
+            const missingLines: Array<{index: number, text: string}> = [];
+
+            currentSrt.forEach((line, index) => {
+                const normalized = normalizeText(line.text);
+                const capCutMatch = capCutMap.get(normalized);
+
+                if (capCutMatch) {
+                    // 매칭 성공: CapCut 타임코드 사용
+                    matchedSrt.push({
+                        ...line,
+                        startTime: capCutMatch.startTime,
+                        endTime: capCutMatch.endTime
+                    });
+                } else {
+                    // 누락 감지: 임시 타임코드 유지
+                    matchedSrt.push({
+                        ...line,
+                        startTime: "00:00:00,000",
+                        endTime: "00:00:00,000"
+                    });
+                    missingLines.push({
+                        index: index + 1,  // 1-based 인덱스
+                        text: line.text
+                    });
+                }
+            });
+
+            // 5. 부모 컴포넌트에 업데이트 전달
+            onUpdateSrtFromCapCut(matchedSrt);
+
+            // 6. 사용자 피드백 (누락 여부에 따라 분기)
+            if (missingLines.length > 0) {
+                // 누락 발견 시
+                const missingText = missingLines
+                    .slice(0, 5)  // 최대 5개만 표시
+                    .map(m => `  ${m.index}번: "${m.text.substring(0, 30)}${m.text.length > 30 ? '...' : ''}"`)
+                    .join('\n');
+
+                const moreLines = missingLines.length > 5 ? `\n  ... 외 ${missingLines.length - 5}개` : '';
+
+                alert(
+                    `⚠️ TTS 누락 감지!\n\n` +
+                    `총 ${currentSrt.length}개 라인 중:\n` +
+                    `✅ 매칭: ${currentSrt.length - missingLines.length}개\n` +
+                    `❌ 누락: ${missingLines.length}개\n\n` +
+                    `누락된 라인:\n${missingText}${moreLines}\n\n` +
+                    `💡 해결 방법:\n` +
+                    `1. 누락 라인만 개별 TTS 생성 (추천)\n` +
+                    `2. 전체 다시 생성\n\n` +
+                    `타임코드는 매칭된 부분만 업데이트되었습니다.`
+                );
+
+                console.log('[CapCut Sync] 누락 감지:', missingLines);
+            } else {
+                // 완벽한 매칭 시
+                alert(
+                    `✅ 완벽한 매칭!\n\n` +
+                    `총 ${currentSrt.length}개 라인 모두 매칭됨\n` +
+                    `누락: 0개\n\n` +
+                    `타임코드가 성공적으로 업데이트되었습니다.`
+                );
+            }
+
+            console.log('[CapCut Sync] 타임코드 매칭 완료', {
+                total: currentSrt.length,
+                matched: currentSrt.length - missingLines.length,
+                missing: missingLines.length,
+                missingIndices: missingLines.map(m => m.index)
+            });
+
+        } catch (error) {
+            console.error('[CapCut Sync] 업로드 실패:', error);
+            alert('❌ SRT 파일 처리 중 오류가 발생했습니다.');
+        } finally {
+            // 파일 입력 초기화 (같은 파일 재업로드 가능하도록)
+            e.target.value = '';
+        }
+    }, [editableSrtLines, onUpdateSrtFromCapCut]);
 
     // Spacebar Key Listener for Play/Pause
     useEffect(() => {
@@ -953,6 +1142,7 @@ export const MainContent: React.FC<MainContentProps> = ({
                                 isLoading={isLoading}
                                 loadingStatus={loadingStatus}
                                 error={error}
+                                onCopyToCapCutSync={handleCopyToCapCutSync}
                             />
                         </div>
                     </div>
@@ -1054,28 +1244,56 @@ export const MainContent: React.FC<MainContentProps> = ({
                             </div>
                         )}
 
-                        {(isLoading && loadingStatus.includes('자막')) ? (
-                            <div className="flex-grow bg-gray-800 rounded-lg shadow-inner flex flex-col items-center justify-start pt-16 border border-gray-700/50">
-                                <div className="relative w-20 h-20 mb-6">
+                        {isLoading ? (
+                            <div className="flex-grow bg-gray-800 rounded-lg shadow-inner flex flex-col items-center justify-center border border-gray-700/50">
+                                <div className="relative w-24 h-24 mb-8">
                                     <div className="absolute top-0 left-0 w-full h-full border-4 border-indigo-500/30 rounded-full"></div>
                                     <div className="absolute top-0 left-0 w-full h-full border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>
                                     <div className="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2">
-                                        <SparklesIcon className="w-8 h-8 text-indigo-400 animate-pulse" />
+                                        <SparklesIcon className="w-10 h-10 text-indigo-400 animate-pulse" />
                                     </div>
                                 </div>
-                                <h3 className="text-xl font-bold text-white mb-2 animate-pulse">{loadingStatus}</h3>
-                                <p className="text-gray-400 text-sm max-w-md text-center leading-relaxed">
-                                    AI가 오디오 파형을 분석하여 타임코드를 생성하고 있습니다.<br />
-                                    잠시만 기다려주세요...
+                                <h3 className="text-2xl font-bold text-white mb-3 animate-pulse">{loadingStatus}</h3>
+                                <p className="text-gray-400 text-sm max-w-md text-center leading-relaxed mb-4">
+                                    {loadingStatus.includes('자막') ? (
+                                        <>AI가 오디오 파형을 분석하여 타임코드를 생성하고 있습니다.</>
+                                    ) : loadingStatus.includes('오디오 생성') ? (
+                                        <>TTS 모델이 오디오를 생성하고 있습니다. 청크별로 순차 처리됩니다.</>
+                                    ) : (
+                                        <>처리 중입니다. 잠시만 기다려주세요...</>
+                                    )}
                                 </p>
-                                <div className="flex gap-2 mt-6">
-                                    <div className="w-2.5 h-2.5 bg-indigo-500 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
-                                    <div className="w-2.5 h-2.5 bg-indigo-500 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
-                                    <div className="w-2.5 h-2.5 bg-indigo-500 rounded-full animate-bounce"></div>
+                                <div className="flex gap-2 mt-4">
+                                    <div className="w-3 h-3 bg-indigo-500 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
+                                    <div className="w-3 h-3 bg-indigo-500 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
+                                    <div className="w-3 h-3 bg-indigo-500 rounded-full animate-bounce"></div>
                                 </div>
                             </div>
                         ) : srtContent && (
                             <div className="flex-grow bg-gray-800 rounded-lg shadow-inner flex flex-col min-h-0">
+                                {/* CapCut SRT Upload Section */}
+                                <div className="flex-shrink-0 flex justify-between items-center p-3 border-b border-gray-700 bg-gray-800/50">
+                                    <h3 className="text-sm font-semibold text-gray-300">자막 목록</h3>
+                                    <div className="flex items-center gap-2">
+                                        <input
+                                            ref={capCutFileInputRef}
+                                            type="file"
+                                            accept=".srt"
+                                            onChange={handleCapCutSrtUpload}
+                                            className="hidden"
+                                        />
+                                        <button
+                                            onClick={() => capCutFileInputRef.current?.click()}
+                                            className="px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-md transition-colors flex items-center gap-1.5"
+                                            title="CapCut에서 다운로드한 SRT 파일을 업로드하여 타임코드 매칭"
+                                        >
+                                            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M7 16a4 4 0 01-.88-7.903A5 5 0 1115.9 6L16 6a5 5 0 011 9.9M15 13l-3-3m0 0l-3 3m3-3v12" />
+                                            </svg>
+                                            CapCut SRT 업로드
+                                        </button>
+                                    </div>
+                                </div>
                                 <div className="flex-shrink-0 flex justify-between items-center p-3 border-b border-gray-700">
                                     <div className="flex items-center gap-2">
                                         <button onClick={() => setSrtMode('chapter')} className={`px-4 py-1.5 text-sm font-semibold rounded-md flex items-center gap-2 ${srtMode === 'chapter' ? 'bg-indigo-600 text-white' : 'bg-gray-700 hover:bg-gray-600 text-gray-300'}`}>

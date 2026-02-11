@@ -1,0 +1,50 @@
+﻿                    srtSplitCharCount,
+                    abortControllerRef.current.signal,
+                    fullText,
+                    1.0,
+                    { chunkIndex: i, startSec: chunkStart, endSec: chunkEnd }
+                );
+
+                if (result.srt) {
+                    const chunkParsed = parseSrt(result.srt);
+                    const chunkStartMs = chunkStart * 1000;
+
+                    chunkParsed.forEach((line) => {
+                        // Use the original index from AI (which matched with our script)
+                        const originalIndex = line.index;
+
+                        // Shift time: Gemini returns relative time within the chunk
+                        const startTimeMs = srtTimeToMs(line.startTime) + chunkStartMs;
+                        const endTimeMs = srtTimeToMs(line.endTime) + chunkStartMs;
+
+                        // Only add/update if not already matched or if this chunk is a better match for this time
+                        // (Simple policy: if match already exists, we could ignore. But let's overwrite to ensure we get timestamps from all chunks)
+                        srtMap.set(originalIndex, {
+                            ...line,
+                            id: `srt-align-${originalIndex}-${Date.now()}`,
+                            startTime: msToSrtTime(startTimeMs),
+                            endTime: msToSrtTime(endTimeMs),
+                        });
+                    });
+                }
+
+                if (i < numChunks - 1) await sleep(500);
+            }
+
+            // Reconstruct final SRT to exactly match script lines
+            const finalSrtLines: SrtLine[] = [];
+            let lastEndTime = "00:00:00,000";
+
+            for (let i = 0; i < allLines.length; i++) {
+                const index = i + 1;
+                const text = allLines[i];
+                const matched = srtMap.get(index);
+
+                if (matched) {
+                    finalSrtLines.push({
+                        ...matched,
+                        index: index,
+                        text: text // Guarantee original text
+                    });
+                    lastEndTime = matched.endTime;
+                } else {

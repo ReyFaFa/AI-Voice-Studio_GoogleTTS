@@ -1,0 +1,167 @@
+﻿diff --git a/services/geminiService.ts b/services/geminiService.ts
+index 2678fb0..c84cf75 100644
+--- a/services/geminiService.ts
++++ b/services/geminiService.ts
+@@ -303,8 +303,6 @@ async function _generateAudio(
+ - ?뱀떊? 李쎌쓽?곸씤 李쎌옉?먭? ?꾨땲?? ?낅젰???띿뒪?몃? ?덈뒗 洹몃?濡??뚮━?댁뼱 ?쎈뒗 **?꾨Ц TTS ?붿쭊**?낅땲??
+ - **留ㅼ슦 以묒슂**: ?꾨옒 ?蹂몄쓽 紐⑤뱺 湲?먮? ??湲?먮룄 鍮좎쭚?놁씠, 異붽? ?놁씠, 蹂???놁씠 **?묎컳??* ?쎌쑝?몄슂.
+ - ?뱁엳 "?먮컯?먮컯", "???? ???앸왂?섍린 ?ъ슫 遺?ъ뼱? 諛섎났?섎뒗 ?⑥뼱?ㅼ쓣 ?덈? 嫄대꼫?곗? 留먭퀬 ?뺥솗??諛쒖쓬?섏꽭??
+-- **留ㅼ슦 以묒슂**: ?꾨옒 ?蹂몄쓽 紐⑤뱺 湲?먮? ??湲?먮룄 鍮좎쭚?놁씠, 異붽? ?놁씠, 蹂???놁씠 **?묎컳??* ?쎌쑝?몄슂.
+-- ?뱁엳 "?먮컯?먮컯", "???? ???앸왂?섍린 ?ъ슫 遺?ъ뼱? 諛섎났?섎뒗 ?⑥뼱?ㅼ쓣 ?덈? 嫄대꼫?곗? 留먭퀬 ?뺥솗??諛쒖쓬?섏꽭??
+ - **?곌린 媛?대뱶 (Director's Notes)**: ${stylePrompt || "?꾪넻 ?쇰떞??遺꾩쐞湲곕? ?대젮 李⑤텇?섍퀬 ?덇꺽 ?덇쾶 ??룆?섏꽭??"}
+ - **湲곕낯 吏덇컧**: ?ъ빞 ?쇰뵒?ㅼ쿂???곕쑜?섍퀬 遺?쒕윭??諛쒖꽦???좎??섎ŉ, ?뚯같???? ???????뺤젣?섏뿬 ?ｊ린 ?명븳 ?뚮━瑜??댁꽭??
+ - AI濡쒖꽌???먯븘瑜?踰꾨━怨??ㅼ쭅 ??룆?먮쭔 吏묒쨷?섏꽭?? 以묎컙???덈? 硫덉텛嫄곕굹 ?앸왂?섏? 留덉꽭??
+@@ -325,7 +323,7 @@ Read the following text EXACTLY as written. DO NOT skip any words, sentences, or
+ 
+ [Strict Instructions]
+ 1. Read the text EXACTLY as written in the [Text to Read] section.
+-2. DO NOT skip any words like "?먮컯?먮컯" or "????. Every word is essential.
++2. DO NOT skip such essential words as "?먮컯?먮컯" or "????.
+ 3. **Voice Consistency & Quality**: Maintain a strictly consistent voice.
+ ${instructions.map((inst, idx) => `${idx + 4}. ${inst}`).join('\n')}
+ 
+@@ -363,73 +361,86 @@ ${processedPrompt}`;
+     // Use unified SDK style: generalAI.models.generateContent
+     console.log(`[Gemini API Request] Model: ${modelName}, Prompt Length: ${finalPrompt.length}`);
+ 
+-    const result = await (generalAI as any).models.generateContent({
+-      model: modelName,
+-      contents: [{ role: 'user', parts: [{ text: finalPrompt }] }],
+-      config: {
+-        responseModalities: ['AUDIO'],
+-        speechConfig: isNativeAudio ? undefined : speechConfig,
+-        generationConfig: {
+-          temperature: 0.2, // Balance between voice consistency and emotional richness
+-        }
+-      },
+-      safetySettings: [
+-        { category: 'HARM_CATEGORY_HARASSMENT' as any, threshold: 'BLOCK_NONE' as any },
+-        { category: 'HARM_CATEGORY_HATE_SPEECH' as any, threshold: 'BLOCK_NONE' as any },
+-        { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT' as any, threshold: 'BLOCK_NONE' as any },
+-        { category: 'HARM_CATEGORY_DANGEROUS_CONTENT' as any, threshold: 'BLOCK_NONE' as any },
+-        { category: 'HARM_CATEGORY_CIVIC_INTEGRITY' as any, threshold: 'BLOCK_NONE' as any },
+-      ]
+-    });
+-
+-    const response = result; // result inside (generalAI as any).models.generateContent is the parsed response directly
+-
+-    console.log("[Gemini API Full Response]", JSON.stringify(response, null, 2));
+-
+-    const candidate = response.candidates?.[0];
++    // Unified retry logic for both 500 errors and empty audio data
++    const maxRetries = 3;
++
++    for (let attempt = 0; attempt <= maxRetries; attempt++) {
++      try {
++        const result = await (generalAI as any).models.generateContent({
++          model: modelName,
++          contents: [{ role: 'user', parts: [{ text: finalPrompt }] }],
++          config: {
++            responseModalities: ['AUDIO'],
++            speechConfig: isNativeAudio ? undefined : speechConfig,
++            generationConfig: {
++              temperature: 0.2,
++            }
++          },
++          safetySettings: [
++            { category: 'HARM_CATEGORY_HARASSMENT' as any, threshold: 'BLOCK_NONE' as any },
++            { category: 'HARM_CATEGORY_HATE_SPEECH' as any, threshold: 'BLOCK_NONE' as any },
++            { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT' as any, threshold: 'BLOCK_NONE' as any },
++            { category: 'HARM_CATEGORY_DANGEROUS_CONTENT' as any, threshold: 'BLOCK_NONE' as any },
++            { category: 'HARM_CATEGORY_CIVIC_INTEGRITY' as any, threshold: 'BLOCK_NONE' as any },
++          ]
++        });
+ 
+-    // Check finishReason
+-    if (candidate?.finishReason && candidate.finishReason !== 'STOP' && candidate.finishReason !== 'MAX_TOKENS') {
+-      console.warn(`[Gemini TTS] Unusual finishReason: ${candidate.finishReason}. Audio might be truncated.`);
+-    }
++        const candidate = result.candidates?.[0];
+ 
+-    const audioPart = candidate?.content?.parts.find((part: any) => part.inlineData);
+-    const data = audioPart?.inlineData?.data;
++        // Check for safety/policy blocks (don't retry these)
++        if (candidate?.finishReason === 'SAFETY') {
++          throw new Error(`?덉쟾 ?꾪꽣???섑빐 李⑤떒?섏뿀?듬땲?? (FinishReason: SAFETY). 臾몄젣媛 ???띿뒪???쇰?: "${prompt.substring(0, 100)}..."`);
++        }
++        if (candidate?.finishReason === 'PROHIBITED_CONTENT') {
++          const blockPreview = prompt.length > 500 ? prompt.substring(0, 500) + "..." : prompt;
++          throw new Error(`援ш? ?뺤콉???섑빐 李⑤떒??肄섑뀗痢좎엯?덈떎. (FinishReason: PROHIBITED_CONTENT). (李⑤떒??援ш컙 ?쒖옉: "${blockPreview}")`);
++        }
++        if (candidate?.finishReason === 'RECITATION') {
++          throw new Error(`??묎텒???덈뒗 ?띿뒪?몃줈 媛먯??섏뼱 李⑤떒?섏뿀?듬땲?? (FinishReason: RECITATION).`);
++        }
+ 
+-    if (!data) {
+-      console.error("API response missing audio. Full candidate:", JSON.stringify(candidate, null, 2));
++        const audioPart = candidate?.content?.parts?.find((part: any) => part.inlineData?.data);
++        const data = audioPart?.inlineData?.data;
+ 
+-      if (candidate?.finishReason === 'SAFETY') {
+-        throw new Error(`?덉쟾 ?꾪꽣???섑빐 李⑤떒?섏뿀?듬땲?? (FinishReason: SAFETY). 臾몄젣媛 ???띿뒪???쇰?: "${prompt.substring(0, 100)}..."`);
+-      }
+-      if (candidate?.finishReason === 'PROHIBITED_CONTENT') {
+-        const blockPreview = prompt.length > 500 ? prompt.substring(0, 500) + "..." : prompt;
+-        console.error("李⑤떒???띿뒪??泥?겕 ?꾩껜:", prompt);
+-        throw new Error(`援ш? ?뺤콉???섑빐 李⑤떒??肄섑뀗痢좎엯?덈떎. (FinishReason: PROHIBITED_CONTENT). ?대떦 泥?겕???ы븿???뱀젙 ?⑥뼱???쒗쁽???섏젙??蹂댁꽭?? (李⑤떒??援ш컙 ?쒖옉: "${blockPreview}")`);
+-      }
+-      if (candidate?.finishReason === 'RECITATION') {
+-        throw new Error(`??묎텒???덈뒗 ?띿뒪?몃줈 媛먯??섏뼱 李⑤떒?섏뿀?듬땲?? (FinishReason: RECITATION).`);
+-      }
+-      if (candidate?.finishReason === 'OTHER') {
+-        throw new Error(`?????녿뒗 ?댁쑀濡?紐⑤뜽??李⑤떒?섏뿀?듬땲?? (FinishReason: OTHER).`);
+-      }
++        if (data) {
++          // Success! Audio data found
++          if (attempt > 0) {
++            console.log(`[Gemini API] ??Audio received on retry attempt ${attempt}/${maxRetries}`);
++          }
++          return data;
++        }
+ 
+-      const textPart = candidate?.content?.parts?.[0]?.text;
+-      if (textPart) {
+-        console.warn("Model responded with text instead of audio:", textPart);
+-        throw new Error(`AI媛 ?ㅻ뵒??????띿뒪?몃줈 ?묐떟?덉뒿?덈떎: "${textPart.substring(0, 150)}..."`);
+-      }
++        // Audio data missing - log details and retry if possible
++        const textResp = candidate?.content?.parts?.find((part: any) => part.text);
++        if (textResp) {
++          console.warn(`[Gemini API] Attempt ${attempt + 1}: AI returned text instead of audio:`, textResp.text);
++        } else {
++          console.warn(`[Gemini API] Attempt ${attempt + 1}: inlineData present but data field empty. FinishReason: ${candidate?.finishReason || 'UNKNOWN'}`);
++        }
+ 
+-      // Check if parts exist but are just empty or weird
+-      const parts = candidate?.content?.parts;
+-      if (parts && parts.length > 0) {
+-        console.error("Parts found but no inlineData:", JSON.stringify(parts, null, 2));
++        if (attempt < maxRetries) {
++          const delay = Math.pow(2, attempt + 1) * 1000; // 2s, 4s, 8s
++          console.warn(`[Gemini API] Empty audio data. Retrying in ${delay}ms... (Attempt ${attempt + 1}/${maxRetries})`);
++          await new Promise(res => setTimeout(res, delay));
++        } else {
++          // All retries exhausted
++          throw new Error(`?ㅻ뵒???곗씠???꾨씫 - ${maxRetries}???ъ떆???ㅽ뙣 (FinishReason: ${candidate?.finishReason || 'UNKNOWN'}). 紐⑤뜽???ㅻ뵒?ㅻ? ?앹꽦?섏? 紐삵뻽?듬땲?? ?ㅻⅨ 紐⑤뜽(Flash)濡??쒕룄?섍굅???좎떆 ???ㅼ떆 ?쒕룄?댁＜?몄슂.`);
++        }
++      } catch (e: any) {
++        // Handle HTTP-level errors (500, etc.)
++        const isRetryable = e.message?.includes('500') || e.message?.includes('INTERNAL') || e.message?.includes('503');
++        if (isRetryable && attempt < maxRetries) {
++          const delay = Math.pow(2, attempt + 1) * 1000;
++          console.warn(`[Gemini API] Server error (${e.message?.substring(0, 50)}). Retrying in ${delay}ms... (Attempt ${attempt + 1}/${maxRetries})`);
++          await new Promise(res => setTimeout(res, delay));
++        } else {
++          throw e; // Non-retryable or max retries reached
++        }
+       }
+-
+-      throw new Error(`?ㅻ뵒???곗씠???꾨씫 (FinishReason: ${candidate?.finishReason || 'UNKNOWN'}). API ?묐떟 援ъ“媛 ?됱냼? ?ㅻ쫭?덈떎. 肄섏넄 濡쒓렇瑜??뺤씤?댁＜?몄슂.`);
+     }
+ 
+-    return data;
++    // Should not reach here, but TypeScript safety
++    throw new Error('?ㅻ뵒???앹꽦???ㅽ뙣?덉뒿?덈떎. ?덉긽移?紐삵븳 猷⑦봽 醫낅즺.');
+   } catch (error) {
+     if (error instanceof Error && error.name === 'AbortError') {
+       throw error;

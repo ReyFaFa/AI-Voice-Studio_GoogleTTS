@@ -1,0 +1,92 @@
+{
+  "console": [
+    {
+      "time": "2026-02-11T10:35:19.337Z",
+      "type": "log",
+      "message": "🎯 로그 모니터링 시작!"
+    },
+    {
+      "time": "2026-02-11T10:35:19.337Z",
+      "type": "log",
+      "message": "📥 로그 다운로드: window.downloadLogs()"
+    },
+    {
+      "time": "2026-02-11T10:35:19.337Z",
+      "type": "log",
+      "message": "🗑️ 로그 초기화: window.clearLogs()"
+    },
+    {
+      "time": "2026-02-11T10:35:49.487Z",
+      "type": "log",
+      "message": "[Pipeline v2] Start. Chunks: 7, Model: gemini-2.5-pro-preview-tts"
+    },
+    {
+      "time": "2026-02-11T10:35:49.488Z",
+      "type": "log",
+      "message": "[Gemini API Request] Model: gemini-2.5-pro-preview-tts, Prompt Length: 2443"
+    },
+    {
+      "time": "2026-02-11T10:40:16.794Z",
+      "type": "log",
+      "message": "[Gemini API Request] Model: gemini-2.5-pro-preview-tts, Prompt Length: 2088"
+    },
+    {
+      "time": "2026-02-11T10:40:20.205Z",
+      "type": "log",
+      "message": "💾 로그 자동 백업 완료"
+    },
+    {
+      "time": "2026-02-11T10:45:13.601Z",
+      "type": "log",
+      "message": "[Gemini API Request] Model: gemini-2.5-pro-preview-tts, Prompt Length: 2303"
+    },
+    {
+      "time": "2026-02-11T10:45:19.339Z",
+      "type": "log",
+      "message": "💾 로그 자동 백업 완료"
+    },
+    {
+      "time": "2026-02-11T10:49:03.364Z",
+      "type": "log",
+      "message": "[Gemini API Request] Model: gemini-2.5-pro-preview-tts, Prompt Length: 2148"
+    },
+    {
+      "time": "2026-02-11T10:50:19.338Z",
+      "type": "log",
+      "message": "💾 로그 자동 백업 완료"
+    },
+    {
+      "time": "2026-02-11T10:53:05.716Z",
+      "type": "log",
+      "message": "[Gemini API Request] Model: gemini-2.5-pro-preview-tts, Prompt Length: 2330"
+    },
+    {
+      "time": "2026-02-11T10:55:19.339Z",
+      "type": "log",
+      "message": "💾 로그 자동 백업 완료"
+    },
+    {
+      "time": "2026-02-11T10:56:49.887Z",
+      "type": "log",
+      "message": "[Gemini API Request] Model: gemini-2.5-pro-preview-tts, Prompt Length: 2365"
+    },
+    {
+      "time": "2026-02-11T11:00:19.339Z",
+      "type": "log",
+      "message": "💾 로그 자동 백업 완료"
+    },
+    {
+      "time": "2026-02-11T11:01:21.711Z",
+      "type": "log",
+      "message": "[Gemini API Request] Model: gemini-2.5-pro-preview-tts, Prompt Length: 904"
+    },
+    {
+      "time": "2026-02-11T11:05:19.659Z",
+      "type": "log",
+      "message": "💾 로그 자동 백업 완료"
+    }
+  ],
+  "errors": [],
+  "network": [],
+  "startTime": "2026-02-11T10:35:19.337Z"
+}
