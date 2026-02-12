@@ -28,6 +28,7 @@ import {
 import { Preset, ScriptLine, SrtLine, Voice } from '../types';
 import { AudioPlayer, AudioPlayerHandle } from './AudioPlayer';
 import { encodeAudioBufferToWavBlob, msToSrtTime, parseSrt, srtTimeToMs } from './Header';
+import { matchSubtitlesWithAI } from '../services/geminiService';
 import { ScriptAnalysis } from './ScriptAnalysis';
 import { SilenceRemover } from './SilenceRemover';
 
@@ -382,6 +383,17 @@ export const MainContent: React.FC<MainContentProps> = ({
     const fileInputRef = useRef<HTMLInputElement>(null);
     const capCutFileInputRef = useRef<HTMLInputElement>(null);
 
+    // 커스텀 모달 상태
+    const [matchResultModal, setMatchResultModal] = useState<{
+        isOpen: boolean;
+        title: string;
+        content: string;
+    }>({ isOpen: false, title: '', content: '' });
+
+    // CapCut AI 매칭 로딩 상태
+    const [isAiMatching, setIsAiMatching] = useState(false);
+    const [aiMatchingStatus, setAiMatchingStatus] = useState('');
+
     // Pagination state
     const [currentPage, setCurrentPage] = useState(1);
 
@@ -494,7 +506,11 @@ export const MainContent: React.FC<MainContentProps> = ({
         const validLines = scriptLines.filter(l => l.text.trim());
 
         if (validLines.length === 0) {
-            alert('스크립트가 비어있습니다. 먼저 좌측에 텍스트를 입력해주세요.');
+            setMatchResultModal({
+                isOpen: true,
+                title: '⚠️ 스크립트 없음',
+                content: '스크립트가 비어있습니다. 먼저 좌측에 텍스트를 입력해주세요.'
+            });
             return;
         }
 
@@ -511,13 +527,16 @@ export const MainContent: React.FC<MainContentProps> = ({
         onCopyScriptToSrt(srtLines);
 
         // 4. 사용자 안내
-        alert(
-            `✅ ${srtLines.length}개 라인이 우측 자막 영역으로 복사되었습니다.\n\n` +
-            `다음 단계:\n` +
-            `1. 오디오 생성 (선택사항)\n` +
-            `2. CapCut에서 편집 후 SRT 다운로드\n` +
-            `3. 우측 상단 "CapCut SRT 업로드" 버튼으로 타임코드 매칭`
-        );
+        setMatchResultModal({
+            isOpen: true,
+            title: '✅ 스크립트 복사 완료',
+            content:
+                `${srtLines.length}개 라인이 우측 자막 영역으로 복사되었습니다.\n\n` +
+                `다음 단계:\n` +
+                `1. 오디오 생성 (선택사항)\n` +
+                `2. CapCut에서 편집 후 SRT 다운로드\n` +
+                `3. 우측 상단 "CapCut SRT 업로드" 버튼으로 타임코드 매칭`
+        });
     }, [scriptLines, onCopyScriptToSrt]);
 
     const handleCapCutSrtUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
@@ -526,16 +545,135 @@ export const MainContent: React.FC<MainContentProps> = ({
 
         // 파일 확장자 체크
         if (!file.name.endsWith('.srt')) {
-            alert('❌ SRT 파일만 업로드 가능합니다.');
+            setMatchResultModal({
+                isOpen: true,
+                title: '❌ 파일 형식 오류',
+                content: 'SRT 파일만 업로드 가능합니다.'
+            });
             return;
         }
 
         // 텍스트 정규화 함수 (공백, 구두점 제거, 소문자화)
         const normalizeText = (text: string) => {
             return text
-                .replace(/\s+/g, '')        // 공백 제거
-                .replace(/[.,!?;:'"]/g, '') // 구두점 제거
-                .toLowerCase();              // 소문자 변환
+                .replace(/\s+/g, '')                        // 공백 제거
+                .replace(/[.,!?;:'"،。、！？~…·\-\(\)]/g, '') // 구두점 제거 (한글 포함)
+                .toLowerCase()                               // 소문자 변환
+                .trim();                                     // 앞뒤 공백 제거
+        };
+
+        // 유사도 계산 함수 (Levenshtein 거리 기반)
+        const calculateSimilarity = (str1: string, str2: string): number => {
+            const len1 = str1.length;
+            const len2 = str2.length;
+
+            if (len1 === 0) return len2 === 0 ? 1 : 0;
+            if (len2 === 0) return 0;
+
+            const matrix: number[][] = [];
+
+            // 초기화
+            for (let i = 0; i <= len1; i++) {
+                matrix[i] = [i];
+            }
+            for (let j = 0; j <= len2; j++) {
+                matrix[0][j] = j;
+            }
+
+            // Levenshtein 거리 계산
+            for (let i = 1; i <= len1; i++) {
+                for (let j = 1; j <= len2; j++) {
+                    const cost = str1[i - 1] === str2[j - 1] ? 0 : 1;
+                    matrix[i][j] = Math.min(
+                        matrix[i - 1][j] + 1,      // 삭제
+                        matrix[i][j - 1] + 1,      // 삽입
+                        matrix[i - 1][j - 1] + cost // 교체
+                    );
+                }
+            }
+
+            const distance = matrix[len1][len2];
+            const maxLen = Math.max(len1, len2);
+            return 1 - (distance / maxLen); // 0~1 사이의 유사도
+        };
+
+        // 토큰화 함수 (단어 분리)
+        const tokenize = (text: string): string[] => {
+            const normalized = normalizeText(text);
+            // 한글+영문 단어 단위로 분리 (1글자 단위로 더 정밀하게)
+            const tokens: string[] = [];
+            for (let i = 0; i < normalized.length; i += 1) {
+                tokens.push(normalized.substring(i, i + 1));
+            }
+            return tokens.filter(t => t.length > 0);
+        };
+
+        // 토큰 매칭률 계산
+        const calculateTokenMatch = (sourceTokens: string[], targetText: string): number => {
+            const targetNormalized = normalizeText(targetText);
+            let matchCount = 0;
+
+            for (const token of sourceTokens) {
+                if (targetNormalized.includes(token)) {
+                    matchCount++;
+                }
+            }
+
+            return sourceTokens.length > 0 ? matchCount / sourceTokens.length : 0;
+        };
+
+        // 순차 매칭 함수 (원본 1줄 → 캡컷 연속된 N줄)
+        const findSequentialMatch = (
+            sourceText: string,
+            capCutLines: SrtLine[],
+            startIndex: number,
+            allowLookback: boolean = false
+        ): { matches: SrtLine[], endIndex: number, matchRate: number } | null => {
+            const sourceTokens = tokenize(sourceText);
+            let bestMatches: SrtLine[] = [];
+            let bestMatchRate = 0;
+            let bestEndIndex = startIndex;
+
+            // Look-back: 이전 5개 라인도 탐색 (원본 여러 줄 = 캡컷 1줄 처리)
+            const searchStart = allowLookback ? Math.max(0, startIndex - 5) : startIndex;
+
+            // 슬라이딩 윈도우: 1~10개의 연속된 캡컷 라인 시도
+            for (let i = searchStart; i < capCutLines.length; i++) {
+                for (let windowSize = 1; windowSize <= Math.min(10, capCutLines.length - i); windowSize++) {
+                    const windowLines = capCutLines.slice(i, i + windowSize);
+                    const combinedText = windowLines.map(l => l.text).join(' ');
+
+                    const matchRate = calculateTokenMatch(sourceTokens, combinedText);
+
+                    // 50% 이상 매칭되면 후보로 기록 (음성인식 오류 허용)
+                    if (matchRate >= 0.50 && matchRate > bestMatchRate) {
+                        bestMatches = windowLines;
+                        bestMatchRate = matchRate;
+                        bestEndIndex = i + windowSize;
+                    }
+
+                    // 90% 이상 매칭이면 즉시 반환
+                    if (matchRate >= 0.90) {
+                        return { matches: bestMatches, endIndex: bestEndIndex, matchRate: bestMatchRate };
+                    }
+                }
+
+                // Look-back 모드가 아니면 현재 위치에서만 탐색
+                if (!allowLookback && i >= startIndex) {
+                    break;
+                }
+
+                // Look-back 범위 제한 (너무 멀리 가지 않도록)
+                if (allowLookback && i >= startIndex + 10) {
+                    break;
+                }
+            }
+
+            if (bestMatchRate >= 0.50) {
+                return { matches: bestMatches, endIndex: bestEndIndex, matchRate: bestMatchRate };
+            }
+
+            return null;
         };
 
         try {
@@ -546,101 +684,244 @@ export const MainContent: React.FC<MainContentProps> = ({
             const capCutSrt = parseSrt(text);
 
             if (capCutSrt.length === 0) {
-                alert('❌ SRT 파일이 비어있거나 형식이 잘못되었습니다.');
+                setMatchResultModal({
+                    isOpen: true,
+                    title: '❌ SRT 파일 오류',
+                    content: 'SRT 파일이 비어있거나 형식이 잘못되었습니다.'
+                });
                 return;
             }
 
-            // CapCut SRT를 Map으로 변환 (O(1) 검색 성능)
-            const capCutMap = new Map<string, SrtLine>();
-            capCutSrt.forEach(line => {
-                const normalized = normalizeText(line.text);
-                capCutMap.set(normalized, line);
-            });
+            console.log('[CapCut Sync] CapCut SRT 로드:', capCutSrt.length, '개 라인');
 
             // 3. 현재 우측 자막과 매칭
             const currentSrt = editableSrtLines;
 
             if (currentSrt.length === 0) {
-                alert('❌ 먼저 "캡컷 타임코드 연동" 버튼을 클릭하여 스크립트를 복사해주세요.');
+                setMatchResultModal({
+                    isOpen: true,
+                    title: '❌ 스크립트 복사 필요',
+                    content: '먼저 "캡컷 타임코드 연동" 버튼을 클릭하여 스크립트를 복사해주세요.'
+                });
                 return;
             }
 
-            // 4. 텍스트 기반 매칭 + 누락 감지
+            // 4. Gemini API 기반 AI 매칭
+            console.log('[CapCut Sync] 🤖 Gemini AI 매칭 시작...');
+            setIsAiMatching(true);
+            setAiMatchingStatus('AI 매칭 시작...');
+
+            const capCutInput = capCutSrt.map((line, index) => ({
+                index,
+                text: line.text
+            }));
+
+            const scriptInput = currentSrt.map((line, index) => ({
+                index,
+                text: line.text
+            }));
+
+            // AI 매칭 호출 (진행 상태 콜백 포함)
+            const aiMatches = await matchSubtitlesWithAI(
+                capCutInput,
+                scriptInput,
+                (status: string) => setAiMatchingStatus(status)
+            );
+
+            console.log(`[CapCut Sync] ✅ AI 매칭 결과: ${aiMatches.length}개`);
+
+            // 매칭 결과 적용
             const matchedSrt: SrtLine[] = [];
             const missingLines: Array<{index: number, text: string}> = [];
+            let successCount = 0;
 
-            currentSrt.forEach((line, index) => {
-                const normalized = normalizeText(line.text);
-                const capCutMatch = capCutMap.get(normalized);
+            for (let i = 0; i < currentSrt.length; i++) {
+                const line = currentSrt[i];
+                const match = aiMatches.find(m => m.scriptIndex === i);
 
-                if (capCutMatch) {
-                    // 매칭 성공: CapCut 타임코드 사용
-                    matchedSrt.push({
-                        ...line,
-                        startTime: capCutMatch.startTime,
-                        endTime: capCutMatch.endTime
-                    });
+                if (match && match.capCutStartIndex >= 0 && match.capCutEndIndex <= capCutSrt.length) {
+                    // 매칭 성공: 캡컷 라인들의 타임코드 병합
+                    const capCutLines = capCutSrt.slice(match.capCutStartIndex, match.capCutEndIndex + 1);
+
+                    if (capCutLines.length > 0) {
+                        const startTime = capCutLines[0].startTime;
+                        const endTime = capCutLines[capCutLines.length - 1].endTime;
+
+                        matchedSrt.push({
+                            ...line,
+                            startTime: startTime,
+                            endTime: endTime
+                        });
+
+                        successCount++;
+
+                        console.log(
+                            `[CapCut Sync] ✅ AI 매칭 [${i + 1}]: "${line.text.substring(0, 30)}..." ` +
+                            `→ CapCut [${match.capCutStartIndex + 1}~${match.capCutEndIndex + 1}] (${capCutLines.length}줄)`
+                        );
+                    } else {
+                        // 빈 범위
+                        matchedSrt.push({
+                            ...line,
+                            startTime: "00:00:00,000",
+                            endTime: "00:00:00,000"
+                        });
+                        missingLines.push({ index: i + 1, text: line.text });
+                        console.warn(`[CapCut Sync] ⚠️ 빈 범위 [${i + 1}]: "${line.text.substring(0, 30)}..."`);
+                    }
                 } else {
-                    // 누락 감지: 임시 타임코드 유지
+                    // 매칭 실패: 임시 타임코드 유지
                     matchedSrt.push({
                         ...line,
                         startTime: "00:00:00,000",
                         endTime: "00:00:00,000"
                     });
-                    missingLines.push({
-                        index: index + 1,  // 1-based 인덱스
-                        text: line.text
-                    });
+
+                    missingLines.push({ index: i + 1, text: line.text });
+                    console.warn(`[CapCut Sync] ❌ 매칭 실패 [${i + 1}]: "${line.text.substring(0, 30)}..."`);
                 }
+            }
+
+            console.log(`[CapCut Sync] 🤖 AI 매칭 통계:`, {
+                total: currentSrt.length,
+                matched: successCount,
+                failed: missingLines.length,
+                matchRate: `${((successCount / currentSrt.length) * 100).toFixed(1)}%`
             });
 
-            // 5. 부모 컴포넌트에 업데이트 전달
-            onUpdateSrtFromCapCut(matchedSrt);
+            // 5. 짧은 자막 자동 병합 (글자 수 제한만 적용)
+            console.log('[CapCut Sync] 🔄 짧은 자막 병합 시작...');
+            const mergedSrt: SrtLine[] = [];
+            let mergeCount = 0;
+            let i = 0;
 
-            // 6. 사용자 피드백 (누락 여부에 따라 분기)
+            const MAX_MERGED_LENGTH = 45;  // 병합 후 최대 45자
+
+            while (i < matchedSrt.length) {
+                const currentLine = matchedSrt[i];
+
+                // 현재 자막이 짧고 유효한 타임코드를 가진 경우, 연속된 짧은 자막들을 수집
+                if (currentLine.text.trim().length < 10 &&
+                    currentLine.startTime !== "00:00:00,000") {
+
+                    // 연속된 짧은 자막들을 수집 (글자 수 제한만 적용)
+                    const linesToMerge: SrtLine[] = [currentLine];
+                    let j = i + 1;
+                    let totalLength = currentLine.text.trim().length;
+
+                    // 다음 자막들도 짧고 유효하면 계속 수집 (글자 수만 체크)
+                    while (j < matchedSrt.length &&
+                           matchedSrt[j].text.trim().length < 10 &&
+                           matchedSrt[j].startTime !== "00:00:00,000") {
+
+                        const nextLength = matchedSrt[j].text.trim().length;
+
+                        // 병합 후 길이가 제한을 초과하면 중단
+                        if (totalLength + 1 + nextLength > MAX_MERGED_LENGTH) {
+                            break;
+                        }
+
+                        linesToMerge.push(matchedSrt[j]);
+                        totalLength += 1 + nextLength;  // 공백 1자 포함
+                        j++;
+                    }
+
+                    // 수집된 자막이 2개 이상이면 병합
+                    if (linesToMerge.length >= 2) {
+                        const mergedText = linesToMerge.map(l => l.text.trim()).join(' ');
+                        const lastLine = linesToMerge[linesToMerge.length - 1];
+
+                        mergedSrt.push({
+                            ...currentLine,
+                            text: mergedText,
+                            endTime: lastLine.endTime
+                        });
+
+                        const lineNumbers = linesToMerge.map((_, idx) => i + idx + 1).join(' + ');
+                        console.log(
+                            `[CapCut Sync] 🔄 병합 [${lineNumbers}] (${mergedText.length}자): ` +
+                            `"${linesToMerge.map(l => l.text.substring(0, 15)).join('", "')}..." ` +
+                            `→ "${mergedText.substring(0, 50)}..."`
+                        );
+
+                        mergeCount++;
+                        i = j;  // 병합된 모든 자막을 건너뜀
+                    } else {
+                        // 1개만 있으면 그대로 추가
+                        mergedSrt.push(currentLine);
+                        i++;
+                    }
+                } else {
+                    // 짧지 않거나 유효하지 않은 자막은 그대로 추가
+                    mergedSrt.push(currentLine);
+                    i++;
+                }
+            }
+
+            console.log(`[CapCut Sync] 🔄 병합 완료: ${matchedSrt.length}개 → ${mergedSrt.length}개 (${mergeCount}회 병합)`);
+
+            // 6. 부모 컴포넌트에 업데이트 전달
+            onUpdateSrtFromCapCut(mergedSrt);
+
+            // 7. 사용자 피드백 (매칭 및 병합 결과)
+            const totalMatched = currentSrt.length - missingLines.length;
+            const matchRate = ((totalMatched / currentSrt.length) * 100).toFixed(1);
+
             if (missingLines.length > 0) {
-                // 누락 발견 시
+                // 일부 매칭 실패 시
                 const missingText = missingLines
                     .slice(0, 5)  // 최대 5개만 표시
-                    .map(m => `  ${m.index}번: "${m.text.substring(0, 30)}${m.text.length > 30 ? '...' : ''}"`)
+                    .map(m => `  ${m.index}번: "${m.text.substring(0, 40)}${m.text.length > 40 ? '...' : ''}"`)
                     .join('\n');
 
                 const moreLines = missingLines.length > 5 ? `\n  ... 외 ${missingLines.length - 5}개` : '';
 
-                alert(
-                    `⚠️ TTS 누락 감지!\n\n` +
-                    `총 ${currentSrt.length}개 라인 중:\n` +
-                    `✅ 매칭: ${currentSrt.length - missingLines.length}개\n` +
-                    `❌ 누락: ${missingLines.length}개\n\n` +
-                    `누락된 라인:\n${missingText}${moreLines}\n\n` +
-                    `💡 해결 방법:\n` +
-                    `1. 누락 라인만 개별 TTS 생성 (추천)\n` +
-                    `2. 전체 다시 생성\n\n` +
-                    `타임코드는 매칭된 부분만 업데이트되었습니다.`
-                );
-
-                console.log('[CapCut Sync] 누락 감지:', missingLines);
+                setMatchResultModal({
+                    isOpen: true,
+                    title: `⚠️ AI 매칭 완료 (${matchRate}%)`,
+                    content:
+                        `총 ${currentSrt.length}개 라인 중:\n` +
+                        `  ✅ AI 매칭: ${successCount}개\n` +
+                        `  🔄 자동 병합: ${mergeCount}회 (짧은 자막)\n` +
+                        `  ❌ 매칭 실패: ${missingLines.length}개\n` +
+                        `  📊 최종 자막: ${mergedSrt.length}개\n\n` +
+                        `매칭 실패 라인:\n${missingText}${moreLines}\n\n` +
+                        `🤖 Gemini AI 추론 기반 매칭:\n` +
+                        `- 문맥 이해 및 순서 보장\n` +
+                        `- 음성 인식 오류 및 의역 처리\n` +
+                        `- 1→N, N→1 매칭 지원\n` +
+                        `- 10자 미만 짧은 자막 자동 병합\n\n` +
+                        `타임코드가 업데이트되었습니다.`
+                });
             } else {
                 // 완벽한 매칭 시
-                alert(
-                    `✅ 완벽한 매칭!\n\n` +
-                    `총 ${currentSrt.length}개 라인 모두 매칭됨\n` +
-                    `누락: 0개\n\n` +
-                    `타임코드가 성공적으로 업데이트되었습니다.`
-                );
+                setMatchResultModal({
+                    isOpen: true,
+                    title: `✅ 완벽한 AI 매칭! (100%)`,
+                    content:
+                        `총 ${currentSrt.length}개 라인 모두 매칭됨!\n\n` +
+                        `  ✅ AI 매칭: ${successCount}개\n` +
+                        `  🔄 자동 병합: ${mergeCount}회 (짧은 자막)\n` +
+                        `  📊 최종 자막: ${mergedSrt.length}개\n\n` +
+                        `🤖 Gemini AI 추론 기반 매칭:\n` +
+                        `- 문맥 이해 및 순서 보장\n` +
+                        `- 음성 인식 오류 및 의역 처리\n` +
+                        `- 1→N, N→1 매칭 지원\n` +
+                        `- 10자 미만 짧은 자막 자동 병합\n\n` +
+                        `타임코드가 성공적으로 업데이트되었습니다!`
+                });
             }
-
-            console.log('[CapCut Sync] 타임코드 매칭 완료', {
-                total: currentSrt.length,
-                matched: currentSrt.length - missingLines.length,
-                missing: missingLines.length,
-                missingIndices: missingLines.map(m => m.index)
-            });
 
         } catch (error) {
             console.error('[CapCut Sync] 업로드 실패:', error);
-            alert('❌ SRT 파일 처리 중 오류가 발생했습니다.');
+            setMatchResultModal({
+                isOpen: true,
+                title: '❌ 처리 오류',
+                content: `SRT 파일 처리 중 오류가 발생했습니다.\n\n${error instanceof Error ? error.message : '알 수 없는 오류'}`
+            });
         } finally {
+            setIsAiMatching(false);
+            setAiMatchingStatus('');
             // 파일 입력 초기화 (같은 파일 재업로드 가능하도록)
             e.target.value = '';
         }
@@ -1284,7 +1565,8 @@ export const MainContent: React.FC<MainContentProps> = ({
                                         />
                                         <button
                                             onClick={() => capCutFileInputRef.current?.click()}
-                                            className="px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 rounded-md transition-colors flex items-center gap-1.5"
+                                            disabled={isAiMatching}
+                                            className="px-3 py-1.5 text-xs font-semibold text-white bg-indigo-600 hover:bg-indigo-700 disabled:bg-gray-600 disabled:cursor-not-allowed rounded-md transition-colors flex items-center gap-1.5"
                                             title="CapCut에서 다운로드한 SRT 파일을 업로드하여 타임코드 매칭"
                                         >
                                             <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
@@ -1292,6 +1574,12 @@ export const MainContent: React.FC<MainContentProps> = ({
                                             </svg>
                                             CapCut SRT 업로드
                                         </button>
+                                        {isAiMatching && aiMatchingStatus && (
+                                            <div className="flex items-center gap-2 bg-indigo-500/10 px-2 py-1 rounded-full border border-indigo-500/30">
+                                                <div className="w-2.5 h-2.5 border-2 border-indigo-400 border-t-transparent rounded-full animate-spin"></div>
+                                                <p className="text-[11px] text-indigo-300 font-semibold animate-pulse">{aiMatchingStatus}</p>
+                                            </div>
+                                        )}
                                     </div>
                                 </div>
                                 <div className="flex-shrink-0 flex justify-between items-center p-3 border-b border-gray-700">
@@ -1367,9 +1655,31 @@ export const MainContent: React.FC<MainContentProps> = ({
                                                     key={line.id}
                                                     ref={line.id === activeSrtLineId ? activeRowRef : null}
                                                     onClick={() => handleSrtLineClick(line)}
-                                                    className={`border-b border-gray-700/60 transition-colors ${line.id === activeSrtLineId ? 'bg-indigo-900/40' : 'hover:bg-gray-700/40'} ${srtMode === 'chapter' ? 'cursor-pointer' : ''}`}
+                                                    className={`border-b transition-colors ${
+                                                        line.warningType === 'no_audio'
+                                                            ? 'bg-red-900/20 border-red-500/50 hover:bg-red-900/30'
+                                                            : line.warningType === 'suspicious_timecode'
+                                                            ? 'bg-yellow-900/20 border-yellow-500/50 hover:bg-yellow-900/30'
+                                                            : line.id === activeSrtLineId
+                                                            ? 'bg-indigo-900/40 border-gray-700/60'
+                                                            : 'hover:bg-gray-700/40 border-gray-700/60'
+                                                    } ${srtMode === 'chapter' ? 'cursor-pointer' : ''}`}
                                                 >
-                                                    <td className="px-4 py-2 text-gray-400 align-top">{index + 1}</td>
+                                                    <td className="px-4 py-2 text-gray-400 align-top">
+                                                        <div className="flex items-center gap-2">
+                                                            <span>{index + 1}</span>
+                                                            {line.warningType === 'no_audio' && (
+                                                                <span className="flex items-center gap-1 px-1.5 py-0.5 bg-red-500/20 text-red-400 text-[10px] rounded-full whitespace-nowrap" title={`오디오 누락 (청크 ${(line.chunkIndex ?? -1) + 1})`}>
+                                                                    🔴
+                                                                </span>
+                                                            )}
+                                                            {line.warningType === 'suspicious_timecode' && (
+                                                                <span className="flex items-center gap-1 px-1.5 py-0.5 bg-yellow-500/20 text-yellow-400 text-[10px] rounded-full whitespace-nowrap" title="타임코드 의심">
+                                                                    ⚠️
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                    </td>
                                                     {srtMode === 'edit' && (
                                                         <td className="px-2 py-2 font-mono align-top text-center">
                                                             <div className="flex items-center justify-center gap-1">
@@ -1385,9 +1695,13 @@ export const MainContent: React.FC<MainContentProps> = ({
                                                                 value={line.startTime}
                                                                 onChange={(e) => onUpdateSrtLine(line.id, { startTime: e.target.value })}
                                                                 onMouseDown={(e) => handleTimeDragStart(e, line.id, 'startTime')}
-                                                                className="w-full bg-gray-800 p-1 rounded-md border border-transparent focus:border-indigo-500 focus:bg-gray-900 outline-none cursor-ew-resize"
+                                                                className={`w-full bg-gray-800 p-1 rounded-md border outline-none cursor-ew-resize ${
+                                                                    line.warningType
+                                                                        ? 'border-red-500/50 focus:border-red-500 opacity-60'
+                                                                        : 'border-transparent focus:border-indigo-500 focus:bg-gray-900'
+                                                                }`}
                                                             />
-                                                        ) : (<div>{line.startTime}</div>)}
+                                                        ) : (<div className={line.warningType ? 'opacity-60' : ''}>{line.startTime}</div>)}
                                                     </td>
                                                     <td className="px-4 py-2 font-mono align-top">
                                                         {srtMode === 'edit' ? (
@@ -1396,9 +1710,13 @@ export const MainContent: React.FC<MainContentProps> = ({
                                                                 value={line.endTime}
                                                                 onChange={(e) => onUpdateSrtLine(line.id, { endTime: e.target.value })}
                                                                 onMouseDown={(e) => handleTimeDragStart(e, line.id, 'endTime')}
-                                                                className="w-full bg-gray-800 p-1 rounded-md border border-transparent focus:border-indigo-500 focus:bg-gray-900 outline-none cursor-ew-resize"
+                                                                className={`w-full bg-gray-800 p-1 rounded-md border outline-none cursor-ew-resize ${
+                                                                    line.warningType
+                                                                        ? 'border-red-500/50 focus:border-red-500 opacity-60'
+                                                                        : 'border-transparent focus:border-indigo-500 focus:bg-gray-900'
+                                                                }`}
                                                             />
-                                                        ) : (<div>{line.endTime}</div>)}
+                                                        ) : (<div className={line.warningType ? 'opacity-60' : ''}>{line.endTime}</div>)}
                                                     </td>
                                                     <td className="px-4 py-2 align-top leading-relaxed">
                                                         {srtMode === 'edit' ? (
@@ -1418,9 +1736,28 @@ export const MainContent: React.FC<MainContentProps> = ({
                                                     </td>
                                                     {srtMode === 'edit' && (
                                                         <td className="px-4 py-2 text-center align-top">
-                                                            <button onClick={(e) => { e.stopPropagation(); onRemoveSrtLine(line.id); }} className="text-gray-500 hover:text-red-500">
-                                                                <TrashIcon className="w-5 h-5" />
-                                                            </button>
+                                                            <div className="flex items-center justify-center gap-2">
+                                                                {line.warningType === 'no_audio' && line.chunkIndex !== undefined && line.chunkIndex >= 0 && currentAudioItem && (
+                                                                    <button
+                                                                        onClick={(e) => {
+                                                                            e.stopPropagation();
+                                                                            if (window.confirm(`청크 ${line.chunkIndex + 1}을 재생성하시겠습니까?`)) {
+                                                                                onRegenerateChunk(currentAudioItem.id, line.chunkIndex);
+                                                                            }
+                                                                        }}
+                                                                        className="px-2 py-1 bg-red-600 hover:bg-red-500 text-white text-xs rounded-md flex items-center gap-1"
+                                                                        title={`청크 ${line.chunkIndex + 1} 재생성`}
+                                                                    >
+                                                                        <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                                                                        </svg>
+                                                                        청크{line.chunkIndex + 1}
+                                                                    </button>
+                                                                )}
+                                                                <button onClick={(e) => { e.stopPropagation(); onRemoveSrtLine(line.id); }} className="text-gray-500 hover:text-red-500">
+                                                                    <TrashIcon className="w-5 h-5" />
+                                                                </button>
+                                                            </div>
                                                         </td>
                                                     )}
                                                 </tr>
@@ -1446,6 +1783,51 @@ export const MainContent: React.FC<MainContentProps> = ({
                     <ScriptAnalysis analysisData={scriptAnalysis} />
                 </div>
             </aside>
+
+            {/* 커스텀 매칭 결과 모달 */}
+            {matchResultModal.isOpen && (
+                <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+                    <div className="bg-gray-800 rounded-lg shadow-2xl max-w-2xl w-full max-h-[80vh] flex flex-col border border-gray-700">
+                        {/* 헤더 */}
+                        <div className="flex items-center justify-between px-6 py-4 border-b border-gray-700">
+                            <h2 className="text-xl font-bold text-white">{matchResultModal.title}</h2>
+                            <button
+                                onClick={() => setMatchResultModal({ isOpen: false, title: '', content: '' })}
+                                className="p-1 text-gray-400 hover:text-white hover:bg-gray-700 rounded transition-colors"
+                                aria-label="닫기"
+                            >
+                                <XCircleIcon className="w-6 h-6" />
+                            </button>
+                        </div>
+
+                        {/* 내용 */}
+                        <div className="flex-1 overflow-y-auto px-6 py-4">
+                            <pre className="text-sm text-gray-200 whitespace-pre-wrap font-mono leading-relaxed select-text">
+                                {matchResultModal.content}
+                            </pre>
+                        </div>
+
+                        {/* 하단 버튼 */}
+                        <div className="flex items-center justify-end gap-3 px-6 py-4 border-t border-gray-700 bg-gray-900/50">
+                            <button
+                                onClick={() => {
+                                    navigator.clipboard.writeText(matchResultModal.title + '\n\n' + matchResultModal.content);
+                                }}
+                                className="flex items-center gap-2 px-4 py-2 text-sm font-medium text-gray-300 bg-gray-700 rounded hover:bg-gray-600 transition-colors"
+                            >
+                                <ClipboardIcon className="w-4 h-4" />
+                                복사
+                            </button>
+                            <button
+                                onClick={() => setMatchResultModal({ isOpen: false, title: '', content: '' })}
+                                className="px-4 py-2 text-sm font-medium text-white bg-blue-600 rounded hover:bg-blue-700 transition-colors"
+                            >
+                                확인
+                            </button>
+                        </div>
+                    </div>
+                </div>
+            )}
         </div>
     );
 };

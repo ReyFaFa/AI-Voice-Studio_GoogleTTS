@@ -819,3 +819,190 @@ export async function generateAudioWithLiveAPIMultiTurn(
     }
   });
 }
+
+/**
+ * Gemini API를 사용하여 캡컷 자막과 원본 대본을 AI 추론으로 매칭
+ * @param capCutSrtText 캡컷 SRT 텍스트 (번호, 타임코드 포함)
+ * @param scriptLines 원본 자막 라인 배열
+ * @returns 매칭 결과 JSON 배열
+ */
+export async function matchSubtitlesWithAI(
+  capCutSrtLines: Array<{ index: number; text: string }>,
+  scriptLines: Array<{ index: number; text: string }>,
+  onProgress?: (status: string) => void
+): Promise<Array<{ scriptIndex: number; capCutStartIndex: number; capCutEndIndex: number }>> {
+  if (!generalAI) {
+    throw new Error('Gemini API가 초기화되지 않았습니다. API 키를 확인해주세요.');
+  }
+
+  // 배치 처리 (SDK 제한으로 인해 한 번에 처리 불가)
+  const BATCH_SIZE = 100;
+  const totalBatches = Math.ceil(scriptLines.length / BATCH_SIZE);
+  const allMatches: Array<{ scriptIndex: number; capCutStartIndex: number; capCutEndIndex: number }> = [];
+
+  console.log(`[AI Matching] 배치 처리 시작: ${totalBatches}개 배치`);
+  onProgress?.(` AI 매칭 준비중... (${scriptLines.length}줄)`);
+
+  for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
+    const startIdx = batchIndex * BATCH_SIZE;
+    const endIdx = Math.min(startIdx + BATCH_SIZE, scriptLines.length);
+    const batchScriptLines = scriptLines.slice(startIdx, endIdx);
+
+    const progress = `AI 매칭 중 (${batchIndex + 1}/${totalBatches})... ${startIdx + 1}~${endIdx}줄`;
+    console.log(`[AI Matching] ${progress}`);
+    onProgress?.(progress);
+
+    // 이전 배치의 마지막 캡컷 인덱스 계산
+    const lastCapCutIndex = allMatches.length > 0
+      ? Math.max(...allMatches.map(m => m.capCutEndIndex)) + 1
+      : 0;
+
+    // 프롬프트 생성 (현재 배치만)
+    const capCutText = capCutSrtLines
+      .slice(lastCapCutIndex)
+      .map(line => `[${line.index}] ${line.text}`)
+      .join('\n');
+
+    const scriptText = batchScriptLines
+      .map(line => `[${line.index}] ${line.text}`)
+      .join('\n');
+
+  const prompt = `당신은 영상 자막 타임코드 매칭 전문가입니다.
+
+**배경:**
+- 원본 대본: 나레이션용으로 작성된 완전한 스크립트
+- 캡컷 SRT: 실제 나레이션 음성을 자동 인식하여 생성된 자막 (타임코드 포함)
+- 목표: 원본 대본을 화면 자막으로 표시하되, 캡컷 SRT의 정확한 타임코드를 사용
+
+**작업 목표:**
+원본 대본의 각 라인이 나레이션이 읽고 화면 자막으로 사용하기 적절하도록,
+캡컷 SRT의 타임코드를 정확히 매칭하세요.
+원본 대본이 불필요하게 줄바꿈되어 너무 짧다면 화면 자막을 고려하여 한 줄로 합쳐주세요.
+
+**매칭 규칙:**
+1. 순서는 앞에서부터 순차적으로 진행됩니다 (절대 뒤로 가지 않음)
+2. 원본 대본 1줄 = 캡컷 N줄 매칭 가능 (1→N, 예: 대본 34 = 캡컷 76~78)
+3. 원본 대본 N줄 = 캡컷 1줄 매칭 가능 (N→1, 예: 대본 54+55 = 캡컷 110)
+4. 음성 인식 오류, 띄어쓰기 차이, 의역 모두 고려하여 매칭
+5. 모든 원본 대본 라인은 반드시 매칭되어야 함
+
+**추가 작업 - 짧은 문장 합치기:**
+원본 대본에 불필요하게 짧은 문장이 여러 줄로 나뉘어 있는 경우,
+자연스러운 한 문장/문단으로 합쳐서 캡컷 타임코드를 매칭해주세요.
+
+합쳐진 경우에도 각 원본 라인마다 JSON 항목을 생성하되, 동일한 캡컷 범위를 지정하세요.
+
+예시:
+  원본 [10]: "안녕하세요."
+  원본 [11]: "오늘은"
+  원본 [12]: "날씨가 좋네요."
+  캡컷 [15]: "안녕하세요 오늘은 날씨가 좋네요"
+
+  → 출력:
+  {"scriptIndex": 10, "capCutStartIndex": 15, "capCutEndIndex": 15},
+  {"scriptIndex": 11, "capCutStartIndex": 15, "capCutEndIndex": 15},
+  {"scriptIndex": 12, "capCutStartIndex": 15, "capCutEndIndex": 15}
+
+**입력 데이터:**
+
+캡컷 SRT (${capCutSrtLines.length - lastCapCutIndex}줄, 시작 인덱스: ${lastCapCutIndex}):
+${capCutText}
+
+원본 자막분할 대본 (${batchScriptLines.length}줄, 인덱스 ${startIdx}~${endIdx - 1}):
+${scriptText}
+
+**출력 형식 (JSON만 반환, 설명 없이):**
+반드시 아래 형식의 JSON 배열만 반환하세요. 마크다운 코드 블록 없이 순수 JSON만 출력하세요.
+[
+  {"scriptIndex": ${startIdx}, "capCutStartIndex": ${lastCapCutIndex}, "capCutEndIndex": ...},
+  {"scriptIndex": ${startIdx + 1}, "capCutStartIndex": ..., "capCutEndIndex": ...}
+]
+
+scriptIndex: 원본 대본 라인 번호 (${startIdx}부터 시작)
+capCutStartIndex: 매칭되는 첫 번째 캡컷 라인 번호
+capCutEndIndex: 매칭되는 마지막 캡컷 라인 번호 (포함)`;
+
+    try {
+      // Gemini API 호출 (올바른 파라미터 구조)
+      const result = await (generalAI as any).models.generateContent({
+        model: 'gemini-2.5-flash',
+        contents: [{
+          role: 'user',
+          parts: [{ text: prompt }]
+        }],
+        generationConfig: {
+          temperature: 0.1,
+          topP: 0.95,
+          topK: 40,
+          maxOutputTokens: 16384  // 최대치로 설정 (응답 잘림 방지)
+        },
+        safetySettings: [
+          { category: 'HARM_CATEGORY_HARASSMENT' as any, threshold: 'BLOCK_NONE' as any },
+          { category: 'HARM_CATEGORY_HATE_SPEECH' as any, threshold: 'BLOCK_NONE' as any },
+          { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT' as any, threshold: 'BLOCK_NONE' as any },
+          { category: 'HARM_CATEGORY_DANGEROUS_CONTENT' as any, threshold: 'BLOCK_NONE' as any },
+          { category: 'HARM_CATEGORY_CIVIC_INTEGRITY' as any, threshold: 'BLOCK_NONE' as any },
+        ]
+      });
+
+      // 응답 텍스트 추출
+      let responseText = '';
+      if (result?.candidates?.[0]?.content?.parts?.[0]?.text) {
+        responseText = result.candidates[0].content.parts[0].text.trim();
+      } else {
+        throw new Error('AI 응답 형식이 올바르지 않습니다.');
+      }
+
+      // 상세 로깅 추가
+      const finishReason = result?.candidates?.[0]?.finishReason;
+      console.log(`[AI Matching] 배치 ${batchIndex + 1} 응답 길이: ${responseText.length} 문자`);
+      console.log(`[AI Matching] 배치 ${batchIndex + 1} finishReason: ${finishReason || 'UNKNOWN'}`);
+
+      // finishReason 검증
+      if (finishReason && finishReason !== 'STOP') {
+        console.warn(`[AI Matching] 배치 ${batchIndex + 1} 경고: finishReason = ${finishReason} (조기 종료 가능성)`);
+        if (finishReason === 'MAX_TOKENS') {
+          console.error(`[AI Matching] 배치 ${batchIndex + 1} 토큰 제한 초과! maxOutputTokens를 더 늘려야 할 수 있습니다.`);
+        }
+      }
+
+      // 응답 미리보기 로깅 (처음 200자, 마지막 200자)
+      if (responseText.length > 500) {
+        const preview = {
+          start: responseText.substring(0, 200),
+          end: responseText.substring(responseText.length - 200)
+        };
+        console.log(`[AI Matching] 배치 ${batchIndex + 1} 응답 미리보기:`, preview);
+      } else {
+        console.log(`[AI Matching] 배치 ${batchIndex + 1} 전체 응답:`, responseText);
+      }
+
+      // JSON 추출 (마크다운 코드 블록 제거)
+      if (responseText.startsWith('```json')) {
+        responseText = responseText.replace(/^```json\n/, '').replace(/\n```$/, '');
+      } else if (responseText.startsWith('```')) {
+        responseText = responseText.replace(/^```\n/, '').replace(/\n```$/, '');
+      }
+
+      // JSON 파싱
+      const batchMatches = JSON.parse(responseText);
+
+      if (!Array.isArray(batchMatches)) {
+        throw new Error('AI 응답이 배열 형식이 아닙니다.');
+      }
+
+      console.log(`[AI Matching] 배치 ${batchIndex + 1} ✅ 성공: ${batchMatches.length}개 매칭 완료`);
+
+      // 결과 누적
+      allMatches.push(...batchMatches);
+
+    } catch (error) {
+      console.error(`[AI Matching] 배치 ${batchIndex + 1} 오류:`, error);
+      throw new Error(`배치 ${batchIndex + 1} AI 매칭 실패: ${error instanceof Error ? error.message : '알 수 없는 오류'}`);
+    }
+  }
+
+  console.log(`[AI Matching] ✅ 전체 완료: ${allMatches.length}개 매칭 완료`);
+  onProgress?.(`AI 매칭 완료! (${allMatches.length}개)`);
+  return allMatches;
+}
