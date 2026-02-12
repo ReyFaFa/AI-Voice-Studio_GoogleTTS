@@ -19,8 +19,8 @@ import {
 import { MainContent } from './components/MainContent';
 import { SubtitleGenerator } from './components/SubtitleGenerator';
 import { DocumentTextIcon, MicrophoneIcon, SettingsIcon, VOICES, XCircleIcon } from './constants';
-import { generateAudioWithLiveAPIMultiTurn, generateSingleSpeakerAudio, generateSrtFromParagraphTimings, previewVoice, setApiKey, transcribeAudioWithSrt, uint8ArrayToBase64 } from './services/geminiService';
-import { AudioChunkItem, Preset, ScriptLine, SrtLine } from './types';
+import { generateAudioWithFallback, generateSingleSpeakerAudio, generateSrtFromParagraphTimings, previewVoice, setApiKey, transcribeAudioWithSrt, uint8ArrayToBase64 } from './services/geminiService';
+import { AudioChunkItem, Preset, ScriptLine, SrtLine, TtsApiKey } from './types';
 
 // Defines the structure for each generated audio clip in the history
 export interface AudioHistoryItem {
@@ -189,6 +189,12 @@ export function App() {
         return localStorage.getItem('gemini_api_key') || '';
     });
 
+    // TTS 전용 API 키 배열 (우선순위 순)
+    const [ttsApiKeys, setTtsApiKeys] = useState<TtsApiKey[]>(() => {
+        const saved = localStorage.getItem('tts_api_keys');
+        return saved ? JSON.parse(saved) : [];
+    });
+
     const abortControllerRef = useRef<AbortController | null>(null);
 
     useEffect(() => {
@@ -221,6 +227,43 @@ export function App() {
         setApiKey(userApiKey);
         setIsApiKeyModalOpen(false);
         alert('API 키가 저장되었습니다.');
+    };
+
+    // TTS API 키 localStorage 저장
+    useEffect(() => {
+        localStorage.setItem('tts_api_keys', JSON.stringify(ttsApiKeys));
+    }, [ttsApiKeys]);
+
+    // TTS API 키 추가
+    const handleAddTtsKey = () => {
+        const newKey: TtsApiKey = {
+            id: `tts-${Date.now()}`,
+            key: ''
+        };
+        setTtsApiKeys([...ttsApiKeys, newKey]);
+    };
+
+    // TTS API 키 수정
+    const handleUpdateTtsKey = (id: string, newKey: string) => {
+        setTtsApiKeys(ttsApiKeys.map(item =>
+            item.id === id ? { ...item, key: newKey } : item
+        ));
+    };
+
+    // TTS API 키 삭제
+    const handleRemoveTtsKey = (id: string) => {
+        setTtsApiKeys(ttsApiKeys.filter(item => item.id !== id));
+    };
+
+    // TTS API 키 위/아래 이동
+    const handleMoveTtsKey = (index: number, direction: 'up' | 'down') => {
+        const newKeys = [...ttsApiKeys];
+        const targetIndex = direction === 'up' ? index - 1 : index + 1;
+
+        if (targetIndex < 0 || targetIndex >= newKeys.length) return;
+
+        [newKeys[index], newKeys[targetIndex]] = [newKeys[targetIndex], newKeys[index]];
+        setTtsApiKeys(newKeys);
     };
 
     const toggleFavorite = (voiceId: string) => {
@@ -540,12 +583,19 @@ export function App() {
 
                 const lines = fullText.split('\n');
 
-                const result = await generateAudioWithLiveAPIMultiTurn(
+                // TTS 전용 API 키 준비
+                const ttsKeys = ttsApiKeys
+                    .filter(item => item.key.trim() !== '')
+                    .map(item => item.key);
+
+                const result = await generateAudioWithFallback(
                     lines,
                     singleSpeakerVoice,
                     stylePrompt,
                     speechSpeed, // Pass the speed correctly
                     500, // 500ms silence between lines
+                    ttsKeys,  // TTS 전용 API 키 배열
+                    userApiKey,  // 기본 API 키 (fallback)
                     abortControllerRef.current.signal
                 );
 
@@ -1686,19 +1736,23 @@ export function App() {
                 {/* API Key Modal */}
                 {isApiKeyModalOpen && (
                     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/50 backdrop-blur-sm p-4">
-                        <div className="bg-gray-800 rounded-lg shadow-xl w-full max-w-md border border-gray-700 overflow-hidden">
+                        <div className="bg-gray-800 rounded-lg shadow-xl w-full max-w-2xl border border-gray-700 overflow-hidden max-h-[90vh] flex flex-col">
                             <div className="flex justify-between items-center p-4 border-b border-gray-700 bg-gray-900/50">
                                 <h3 className="text-lg font-bold text-white">API 키 설정</h3>
                                 <button onClick={() => setIsApiKeyModalOpen(false)} className="text-gray-400 hover:text-white">
                                     <XCircleIcon className="w-6 h-6" />
                                 </button>
                             </div>
-                            <div className="p-6 space-y-4">
+                            <div className="p-6 space-y-6 overflow-y-auto">
                                 <p className="text-sm text-gray-300">
                                     Gemini API 키를 입력하세요. 입력한 키는 브라우저에만 저장되며 서버로 전송되지 않습니다.
                                 </p>
-                                <div>
-                                    <label htmlFor="api-key-input" className="block text-sm font-medium text-gray-400 mb-1">API Key</label>
+
+                                {/* 기본 API 키 (대본 분석용) */}
+                                <div className="space-y-2">
+                                    <label htmlFor="api-key-input" className="block text-sm font-medium text-gray-300">
+                                        기본 API 키 (대본 분석/자막 생성용)
+                                    </label>
                                     <input
                                         id="api-key-input"
                                         type="password"
@@ -1708,6 +1762,85 @@ export function App() {
                                         className="w-full bg-gray-700 border border-gray-600 rounded-md p-2 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
                                     />
                                 </div>
+
+                                {/* TTS 전용 API 키 리스트 */}
+                                <div className="space-y-3 pt-4 border-t border-gray-700">
+                                    <div className="flex items-center justify-between">
+                                        <label className="block text-sm font-medium text-gray-300">
+                                            TTS 전용 API 키 (우선순위 순)
+                                        </label>
+                                        <button
+                                            onClick={handleAddTtsKey}
+                                            className="px-3 py-1 bg-indigo-600 hover:bg-indigo-700 text-white text-xs rounded-md font-medium transition-colors flex items-center gap-1"
+                                        >
+                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 4v16m8-8H4" />
+                                            </svg>
+                                            추가
+                                        </button>
+                                    </div>
+
+                                    {ttsApiKeys.length === 0 ? (
+                                        <p className="text-xs text-gray-500 bg-gray-900/50 p-3 rounded-md">
+                                            TTS 전용 API 키를 추가하면 음성 생성 시 기본 키 대신 우선 사용됩니다.<br />
+                                            Rate Limit 에러 시 자동으로 다음 키로 전환됩니다.
+                                        </p>
+                                    ) : (
+                                        <div className="space-y-2">
+                                            {ttsApiKeys.map((item, index) => (
+                                                <div key={item.id} className="flex items-center gap-2 bg-gray-900/30 p-2 rounded-md">
+                                                    {/* 우선순위 표시 */}
+                                                    <span className="text-xs font-mono text-gray-500 w-8 text-center flex-shrink-0">
+                                                        #{index + 1}
+                                                    </span>
+
+                                                    {/* API 키 입력 */}
+                                                    <input
+                                                        type="password"
+                                                        value={item.key}
+                                                        onChange={(e) => handleUpdateTtsKey(item.id, e.target.value)}
+                                                        placeholder={`TTS API 키 ${index + 1}`}
+                                                        className="flex-grow bg-gray-700 border border-gray-600 rounded-md p-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                                    />
+
+                                                    {/* 위/아래 이동 버튼 */}
+                                                    <button
+                                                        onClick={() => handleMoveTtsKey(index, 'up')}
+                                                        disabled={index === 0}
+                                                        className="p-1.5 text-gray-400 hover:text-white disabled:opacity-30 disabled:hover:text-gray-400 transition-colors"
+                                                        title="위로 이동"
+                                                    >
+                                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 15l7-7 7 7" />
+                                                        </svg>
+                                                    </button>
+                                                    <button
+                                                        onClick={() => handleMoveTtsKey(index, 'down')}
+                                                        disabled={index === ttsApiKeys.length - 1}
+                                                        className="p-1.5 text-gray-400 hover:text-white disabled:opacity-30 disabled:hover:text-gray-400 transition-colors"
+                                                        title="아래로 이동"
+                                                    >
+                                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 9l-7 7-7-7" />
+                                                        </svg>
+                                                    </button>
+
+                                                    {/* 삭제 버튼 */}
+                                                    <button
+                                                        onClick={() => handleRemoveTtsKey(item.id)}
+                                                        className="p-1.5 text-gray-400 hover:text-red-500 transition-colors"
+                                                        title="삭제"
+                                                    >
+                                                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M19 7l-.867 12.142A2 2 0 0116.138 21H7.862a2 2 0 01-1.995-1.858L5 7m5 4v6m4-6v6m1-10V4a1 1 0 00-1-1h-4a1 1 0 00-1 1v3M4 7h16" />
+                                                        </svg>
+                                                    </button>
+                                                </div>
+                                            ))}
+                                        </div>
+                                    )}
+                                </div>
+
                                 <div className="flex justify-end pt-2">
                                     <button
                                         onClick={handleSaveApiKey}

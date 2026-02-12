@@ -789,8 +789,8 @@ export const MainContent: React.FC<MainContentProps> = ({
                 matchRate: `${((successCount / currentSrt.length) * 100).toFixed(1)}%`
             });
 
-            // 5. 짧은 자막 자동 병합 (글자 수 제한만 적용)
-            console.log('[CapCut Sync] 🔄 짧은 자막 병합 시작...');
+            // 5. 같은 타임코드 자막 자동 병합 (45자 제한)
+            console.log('[CapCut Sync] 🔄 같은 타임코드 자막 병합 시작...');
             const mergedSrt: SrtLine[] = [];
             let mergeCount = 0;
             let i = 0;
@@ -800,59 +800,95 @@ export const MainContent: React.FC<MainContentProps> = ({
             while (i < matchedSrt.length) {
                 const currentLine = matchedSrt[i];
 
-                // 현재 자막이 짧고 유효한 타임코드를 가진 경우, 연속된 짧은 자막들을 수집
-                if (currentLine.text.trim().length < 10 &&
-                    currentLine.startTime !== "00:00:00,000") {
-
-                    // 연속된 짧은 자막들을 수집 (글자 수 제한만 적용)
+                // 유효한 타임코드를 가진 경우, 같은 타임코드를 가진 연속 자막들을 수집
+                if (currentLine.startTime !== "00:00:00,000") {
                     const linesToMerge: SrtLine[] = [currentLine];
                     let j = i + 1;
-                    let totalLength = currentLine.text.trim().length;
 
-                    // 다음 자막들도 짧고 유효하면 계속 수집 (글자 수만 체크)
+                    // 같은 타임코드를 가진 연속 자막들을 수집
                     while (j < matchedSrt.length &&
-                           matchedSrt[j].text.trim().length < 10 &&
+                           matchedSrt[j].startTime === currentLine.startTime &&
+                           matchedSrt[j].endTime === currentLine.endTime &&
                            matchedSrt[j].startTime !== "00:00:00,000") {
-
-                        const nextLength = matchedSrt[j].text.trim().length;
-
-                        // 병합 후 길이가 제한을 초과하면 중단
-                        if (totalLength + 1 + nextLength > MAX_MERGED_LENGTH) {
-                            break;
-                        }
-
                         linesToMerge.push(matchedSrt[j]);
-                        totalLength += 1 + nextLength;  // 공백 1자 포함
                         j++;
                     }
 
-                    // 수집된 자막이 2개 이상이면 병합
+                    // 2개 이상 수집되었으면 병합 시도
                     if (linesToMerge.length >= 2) {
-                        const mergedText = linesToMerge.map(l => l.text.trim()).join(' ');
-                        const lastLine = linesToMerge[linesToMerge.length - 1];
+                        // 45자 이내로 최대한 병합
+                        let mergedLines: SrtLine[] = [linesToMerge[0]];
+                        let mergedText = linesToMerge[0].text.trim();
 
-                        mergedSrt.push({
-                            ...currentLine,
-                            text: mergedText,
-                            endTime: lastLine.endTime
-                        });
+                        for (let k = 1; k < linesToMerge.length; k++) {
+                            const nextText = linesToMerge[k].text.trim();
+                            const testText = mergedText + ' ' + nextText;
 
-                        const lineNumbers = linesToMerge.map((_, idx) => i + idx + 1).join(' + ');
-                        console.log(
-                            `[CapCut Sync] 🔄 병합 [${lineNumbers}] (${mergedText.length}자): ` +
-                            `"${linesToMerge.map(l => l.text.substring(0, 15)).join('", "')}..." ` +
-                            `→ "${mergedText.substring(0, 50)}..."`
-                        );
+                            if (testText.length <= MAX_MERGED_LENGTH) {
+                                mergedLines.push(linesToMerge[k]);
+                                mergedText = testText;
+                            } else {
+                                // 45자 초과하면 여기까지만 병합하고 중단
+                                break;
+                            }
+                        }
 
-                        mergeCount++;
-                        i = j;  // 병합된 모든 자막을 건너뜀
+                        // 실제로 병합된 개수
+                        if (mergedLines.length >= 2) {
+                            // 병합 성공
+                            mergedSrt.push({
+                                ...currentLine,
+                                text: mergedText,
+                                endTime: currentLine.endTime
+                            });
+
+                            const lineNumbers = mergedLines.map((_, idx) => i + idx + 1).join(' + ');
+                            console.log(
+                                `[CapCut Sync] 🔄 병합 [${lineNumbers}] (${mergedText.length}자): ` +
+                                `"${mergedLines.map(l => l.text.substring(0, 15)).join('", "')}..." ` +
+                                `→ "${mergedText.substring(0, 50)}..."`
+                            );
+
+                            mergeCount++;
+                            i += mergedLines.length;  // 병합된 개수만큼 이동
+                        } else {
+                            // 병합 불가 (45자 초과): 타임코드를 분할하여 중첩 방지
+                            console.log(
+                                `[CapCut Sync] ⚠️ 병합 불가 [${i + 1}~${i + linesToMerge.length}] ` +
+                                `(${linesToMerge.map(l => l.text.trim()).join(' ').length}자 > 45자): ` +
+                                `타임코드 분할`
+                            );
+
+                            // 타임코드를 균등 분할
+                            const startMs = srtTimeToMs(currentLine.startTime);
+                            const endMs = srtTimeToMs(currentLine.endTime);
+                            const totalDuration = endMs - startMs;
+                            const segmentDuration = totalDuration / linesToMerge.length;
+
+                            for (let k = 0; k < linesToMerge.length; k++) {
+                                const segmentStart = startMs + (segmentDuration * k);
+                                const segmentEnd = startMs + (segmentDuration * (k + 1));
+
+                                mergedSrt.push({
+                                    ...linesToMerge[k],
+                                    startTime: msToSrtTime(Math.round(segmentStart)),
+                                    endTime: msToSrtTime(Math.round(segmentEnd))
+                                });
+
+                                console.log(
+                                    `[CapCut Sync]   📌 분할 [${i + k + 1}]: ${msToSrtTime(Math.round(segmentStart))} → ${msToSrtTime(Math.round(segmentEnd))} ` +
+                                    `"${linesToMerge[k].text.substring(0, 30)}..."`
+                                );
+                            }
+                            i += linesToMerge.length;  // 모든 수집된 자막을 건너뜀
+                        }
                     } else {
                         // 1개만 있으면 그대로 추가
                         mergedSrt.push(currentLine);
                         i++;
                     }
                 } else {
-                    // 짧지 않거나 유효하지 않은 자막은 그대로 추가
+                    // 유효하지 않은 타임코드는 그대로 추가
                     mergedSrt.push(currentLine);
                     i++;
                 }

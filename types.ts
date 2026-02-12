@@ -39,6 +39,11 @@ export interface Preset {
   speed: number;
 }
 
+export interface TtsApiKey {
+  id: string;
+  key: string;
+}
+
 // TTS 청크 개별 관리용 인터페이스
 export interface AudioChunkItem {
   id: string;

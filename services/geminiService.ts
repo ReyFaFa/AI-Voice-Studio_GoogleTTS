@@ -17,6 +17,98 @@ export const setApiKey = (apiKey: string) => {
   }
 };
 
+// Rate Limit 에러 감지 함수
+function isRateLimitError(error: any): boolean {
+  const message = error?.message || '';
+  return (
+    message.includes('429') ||
+    message.includes('RESOURCE_EXHAUSTED') ||
+    message.includes('quota') ||
+    message.includes('Rate limit')
+  );
+}
+
+// TTS 생성용 Fallback 시스템
+export async function generateAudioWithFallback(
+  lines: string[],
+  voiceName: string,
+  stylePrompt: string,
+  speed: number,
+  silenceBetweenLinesMs: number,
+  ttsApiKeys: string[],  // TTS 전용 API 키 배열
+  fallbackApiKey: string,  // 기본 API 키 (최종 fallback)
+  signal?: AbortSignal
+): Promise<{
+  audioBuffer: ArrayBuffer;
+  lineTimings: { start: number; end: number }[];
+  paragraphs: string[];
+}> {
+  // 사용할 API 키 목록 준비
+  const validTtsKeys = ttsApiKeys.filter(k => k.trim() !== '');
+  const keysToTry = validTtsKeys.length > 0
+    ? [...validTtsKeys, fallbackApiKey]  // TTS 키들 먼저, 기본 키는 마지막
+    : [fallbackApiKey];  // TTS 키 없으면 기본 키만
+
+  let lastError: Error | null = null;
+  const originalApiKey = fallbackApiKey;  // 기본 키 백업
+
+  for (let i = 0; i < keysToTry.length; i++) {
+    const currentKey = keysToTry[i];
+    const keyType = i < validTtsKeys.length ? 'TTS 전용' : '기본';
+
+    try {
+      console.log(`[TTS Fallback] ${keyType} API 키 ${i + 1}/${keysToTry.length} 시도 중...`);
+
+      // 현재 키로 API 설정
+      setApiKey(currentKey);
+
+      // TTS 생성 시도
+      const result = await generateAudioWithLiveAPIMultiTurn(
+        lines,
+        voiceName,
+        stylePrompt,
+        speed,
+        silenceBetweenLinesMs,
+        signal
+      );
+
+      console.log(`[TTS Fallback] ✅ ${keyType} API 키로 성공!`);
+
+      // 성공 후 기본 키로 복원 (대본 분석용)
+      setApiKey(originalApiKey);
+
+      return result;
+
+    } catch (error: any) {
+      console.warn(`[TTS Fallback] ❌ ${keyType} API 키 ${i + 1} 실패:`, error.message);
+
+      lastError = error;
+
+      // Rate Limit 에러가 아니면 즉시 종료
+      if (!isRateLimitError(error)) {
+        console.error(`[TTS Fallback] Rate Limit이 아닌 에러 발생, 중단:`, error.message);
+        // 기본 키로 복원
+        setApiKey(originalApiKey);
+        throw error;
+      }
+
+      // Rate Limit 에러이고 다음 키가 있으면 계속 시도
+      if (i < keysToTry.length - 1) {
+        console.log(`[TTS Fallback] 🔄 Rate Limit 감지, 다음 API 키로 전환...`);
+        continue;
+      }
+    }
+  }
+
+  // 모든 키 실패 - 기본 키로 복원
+  setApiKey(originalApiKey);
+
+  throw new Error(
+    `모든 API 키의 할당량이 초과되었습니다 (${keysToTry.length}개 시도). ` +
+    `마지막 에러: ${lastError?.message || '알 수 없음'}`
+  );
+}
+
 // Initialize Logic: Prioritize LocalStorage (User entered), then Env (Build time)
 const storedKey = typeof localStorage !== 'undefined' ? localStorage.getItem('gemini_api_key') : null;
 
@@ -934,7 +1026,7 @@ capCutEndIndex: 매칭되는 마지막 캡컷 라인 번호 (포함)`;
           temperature: 0.1,
           topP: 0.95,
           topK: 40,
-          maxOutputTokens: 16384  // 최대치로 설정 (응답 잘림 방지)
+          maxOutputTokens: 65535  // Gemini 2.5 Flash 최대 출력 토큰 (65K)
         },
         safetySettings: [
           { category: 'HARM_CATEGORY_HARASSMENT' as any, threshold: 'BLOCK_NONE' as any },
