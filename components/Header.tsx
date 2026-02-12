@@ -202,6 +202,65 @@ export const detectSilence = (
     return segments;
 };
 
+/**
+ * 오디오 버퍼의 끝부분 무음 구간을 자동으로 제거합니다.
+ * @param audioBuffer 원본 오디오 버퍼
+ * @param threshold 무음으로 간주할 진폭 임계값 (기본: 0.01)
+ * @param minSilenceDuration 무음으로 간주할 최소 지속 시간 (초, 기본: 0.1초)
+ * @returns 무음이 제거된 새 AudioBuffer
+ */
+export const trimTrailingSilence = (
+    audioBuffer: AudioBuffer,
+    threshold: number = 0.03,
+    minSilenceDuration: number = 0.3
+): AudioBuffer => {
+    const channelData = audioBuffer.getChannelData(0);
+    const sampleRate = audioBuffer.sampleRate;
+    const minSilenceSamples = Math.floor(minSilenceDuration * sampleRate);
+
+    // 동적 threshold 계산: 최대 진폭의 5% 또는 기본값 중 큰 값 사용
+    const maxAmplitude = Math.max(...Array.from(channelData).map(Math.abs));
+    const dynamicThreshold = Math.max(threshold, maxAmplitude * 0.05);
+
+    console.log(`[Trim Trailing Silence] Dynamic threshold: ${dynamicThreshold.toFixed(4)} (max amplitude: ${maxAmplitude.toFixed(4)})`);
+
+    // 뒤에서부터 스캔하면서 첫 번째 의미있는 소리 위치 찾기
+    let lastNonSilentSample = -1;
+
+    for (let i = channelData.length - 1; i >= 0; i--) {
+        if (Math.abs(channelData[i]) >= dynamicThreshold) {
+            lastNonSilentSample = i;
+            break;
+        }
+    }
+
+    // 의미있는 소리를 찾지 못했거나 무음이 충분히 길지 않으면 원본 반환
+    if (lastNonSilentSample < 0) {
+        console.log('[Trim Trailing Silence] No significant audio found, returning original');
+        return audioBuffer;
+    }
+
+    const potentialSilentSamples = channelData.length - 1 - lastNonSilentSample;
+    if (potentialSilentSamples < minSilenceSamples) {
+        console.log(`[Trim Trailing Silence] Trailing silence too short (${(potentialSilentSamples / sampleRate).toFixed(2)}s < ${minSilenceDuration}s), skipping trim`);
+        return audioBuffer;
+    }
+
+    // 약간의 여유(100ms) 추가하여 자연스럽게
+    const paddingSamples = Math.floor(0.1 * sampleRate);
+    const trimEndSample = Math.min(lastNonSilentSample + paddingSamples, channelData.length);
+
+    const originalDuration = audioBuffer.duration;
+    const trimmedDuration = trimEndSample / sampleRate;
+    const removedDuration = originalDuration - trimmedDuration;
+
+    console.log(`[Trim Trailing Silence] Original: ${originalDuration.toFixed(2)}s, Trimmed: ${trimmedDuration.toFixed(2)}s, Removed: ${removedDuration.toFixed(2)}s (${((removedDuration / originalDuration) * 100).toFixed(1)}%)`);
+
+    // 슬라이스하여 새 버퍼 생성
+    const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)();
+    return sliceAudioBuffer(audioBuffer, 0, trimEndSample / sampleRate, audioCtx);
+};
+
 
 // =================================================================================
 // TEXT & SCRIPT UTILS
@@ -421,20 +480,31 @@ export const stringifySrt = (lines: SrtLine[]): string => {
         .join('\n\n');
 };
 
-const blobToBase64 = (blob: Blob): Promise<string> => {
-    return new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onloadend = () => {
-            const base64 = (reader.result as string).split(',')[1];
-            if (!base64) {
-                reject(new Error("Failed to read blob as base64."));
-            } else {
-                resolve(base64);
-            }
-        };
-        reader.onerror = reject;
-        reader.readAsDataURL(blob);
-    });
+const blobToBase64 = async (blob: Blob): Promise<string> => {
+    console.log('[blobToBase64] Starting conversion, blob size:', blob.size, 'type:', blob.type);
+
+    try {
+        // 큰 Blob을 처리할 수 있도록 ArrayBuffer 방식으로 변경
+        const arrayBuffer = await blob.arrayBuffer();
+        const uint8Array = new Uint8Array(arrayBuffer);
+
+        // 청크 단위로 base64 변환 (메모리 효율)
+        let binary = '';
+        const chunkSize = 8192;
+
+        for (let i = 0; i < uint8Array.length; i += chunkSize) {
+            const chunk = uint8Array.subarray(i, i + chunkSize);
+            binary += String.fromCharCode.apply(null, Array.from(chunk));
+        }
+
+        const base64 = btoa(binary);
+        console.log('[blobToBase64] Success! Base64 length:', base64.length, 'compression ratio:', ((base64.length / blob.size) * 100).toFixed(1) + '%');
+
+        return base64;
+    } catch (error) {
+        console.error('[blobToBase64] Conversion failed:', error);
+        throw new Error(`Failed to convert blob to base64: ${error instanceof Error ? error.message : 'Unknown error'}`);
+    }
 };
 
 /**

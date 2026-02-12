@@ -25,6 +25,9 @@ export interface SrtLine {
   startTime: string;
   endTime: string;
   text: string;
+  hasAudio?: boolean;        // 오디오 존재 여부
+  chunkIndex?: number;       // 소속 청크 번호 (-1 = 오디오 없음)
+  warningType?: 'no_audio' | 'suspicious_timecode' | null;  // 경고 타입
 }
 
 export interface Preset {

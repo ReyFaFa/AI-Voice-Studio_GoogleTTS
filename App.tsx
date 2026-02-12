@@ -13,7 +13,8 @@ import {
     spliceAudio,
     splitTextIntoChunks,
     srtTimeToMs,
-    stringifySrt
+    stringifySrt,
+    trimTrailingSilence
 } from './components/Header';
 import { MainContent } from './components/MainContent';
 import { SubtitleGenerator } from './components/SubtitleGenerator';
@@ -28,6 +29,7 @@ export interface AudioHistoryItem {
     scriptChunk: string;
     audioBuffer: AudioBuffer;
     audioChunks?: AudioChunkItem[];  // 청크별 개별 오디오 저장
+    failedChunks?: number[];  // 실패한 청크 인덱스 목록
     isTrimmed: boolean;
     contextDuration: number; // Duration of the prepended context in seconds
     status: 'full' | 'trimmed';
@@ -50,6 +52,78 @@ export interface AutoFormatOptions {
 export const MAX_CHAR_LIMIT = 100000; // Expanded to support chunked processing
 
 const sleep = (ms: number) => new Promise(resolve => setTimeout(resolve, ms));
+
+/**
+ * 오디오 누락 감지 로직
+ * - 각 SRT 라인이 실제 오디오 청크에 존재하는지 확인
+ * - 의심스러운 타임코드 감지 (너무 짧음, 너무 김, 겹침 등)
+ */
+function detectMissingAudio(
+    srtLines: SrtLine[],
+    audioChunks: AudioChunkItem[],
+    failedChunks?: number[]
+): SrtLine[] {
+    // 각 청크의 시작/종료 시간 계산
+    const chunkTimeRanges: Array<{ start: number; end: number; index: number }> = [];
+    let currentOffset = 0;
+
+    audioChunks.forEach((chunk, idx) => {
+        chunkTimeRanges.push({
+            start: currentOffset,
+            end: currentOffset + chunk.durationMs,
+            index: idx
+        });
+        currentOffset += chunk.durationMs;
+    });
+
+    return srtLines.map((line, idx) => {
+        const startMs = srtTimeToMs(line.startTime);
+        const endMs = srtTimeToMs(line.endTime);
+        const duration = endMs - startMs;
+
+        // 의심스러운 타임코드 감지
+        let isSuspicious = false;
+        if (duration < 50) isSuspicious = true;           // 50ms 미만 (너무 짧음)
+        if (duration > 30000) isSuspicious = true;        // 30초 초과 (너무 김)
+        if (startMs >= endMs) isSuspicious = true;        // 시작≥종료 (오류)
+
+        // 이전 라인과 겹침 확인
+        if (idx > 0) {
+            const prevEndMs = srtTimeToMs(srtLines[idx - 1].endTime);
+            if (startMs < prevEndMs) {
+                isSuspicious = true;
+            }
+        }
+
+        // 소속 청크 찾기
+        let belongsToChunk = -1;
+        for (const range of chunkTimeRanges) {
+            // 라인의 시작 시간이 청크 범위 내에 있는지 확인
+            if (startMs >= range.start && startMs < range.end) {
+                belongsToChunk = range.index;
+                break;
+            }
+        }
+
+        // 실패한 청크에 속하는지 확인
+        const isInFailedChunk = failedChunks && failedChunks.includes(belongsToChunk);
+
+        // 경고 타입 결정
+        let warningType: 'no_audio' | 'suspicious_timecode' | null = null;
+        if (isInFailedChunk || belongsToChunk < 0) {
+            warningType = 'no_audio';
+        } else if (isSuspicious) {
+            warningType = 'suspicious_timecode';
+        }
+
+        return {
+            ...line,
+            hasAudio: belongsToChunk >= 0 && !isInFailedChunk,
+            chunkIndex: belongsToChunk,
+            warningType: warningType
+        };
+    });
+}
 
 export function App() {
     const [activeTab, setActiveTab] = useState<'tts' | 'subtitles'>('tts');
@@ -521,6 +595,8 @@ export function App() {
 
                 // 청크별 개별 오디오 저장 배열
                 const audioChunkItems: AudioChunkItem[] = [];
+                // 실패한 청크 추적
+                const failedChunkIndices: number[] = [];
 
                 for (let i = 0; i < totalChunks; i++) {
                     const chunkText = textChunks[i];
@@ -547,7 +623,12 @@ export function App() {
 
                         setLoadingStatus(`오디오 처리 중 (${i + 1}/${totalChunks})...`);
                         const chunkBlob = createWavBlobFromBase64Pcm(base64Pcm);
-                        const chunkBuffer = await audioContext.decodeAudioData(await chunkBlob.arrayBuffer());
+                        let chunkBuffer = await audioContext.decodeAudioData(await chunkBlob.arrayBuffer());
+
+                        // ✅ 청크 끝 무음 제거 (Gemini API가 추가하는 패딩 제거)
+                        console.log(`[Chunk ${i + 1}] Before trim: ${chunkBuffer.duration.toFixed(2)}s`);
+                        chunkBuffer = trimTrailingSilence(chunkBuffer, 0.03, 0.3);
+                        console.log(`[Chunk ${i + 1}] After trim: ${chunkBuffer.duration.toFixed(2)}s`);
 
                         // Step 3: Direct Script-to-SRT Mapping (No AI transcription)
                         const inputLines = chunkText.split('\n').filter(line => line.trim().length > 0);
@@ -609,9 +690,15 @@ export function App() {
 
                     } catch (chunkError) {
                         console.error(`[Chunk Loop] Error in chunk ${i + 1}:`, chunkError);
+
+                        // 첫 번째 청크 실패는 치명적 오류
                         if (i === 0) throw chunkError;
-                        setError(`${i + 1}번째 구간에서 오류가 발생했습니다. 현재까지 생성된 부분(${i}개 구간)만 가져옵니다.`);
-                        break;
+
+                        // 실패 청크 기록 후 계속 진행
+                        failedChunkIndices.push(i);
+                        setError(`청크 ${i + 1} 생성 실패. 다음 청크 계속 진행 중...`);
+                        console.log(`[Chunk Loop] Chunk ${i + 1} failed, continuing to next chunk...`);
+                        // break 제거 - 다음 청크로 계속 진행!
                     }
                 }
 
@@ -628,6 +715,7 @@ export function App() {
                     scriptChunk: fullText,
                     audioBuffer: mergedAudioBuffer,
                     audioChunks: audioChunkItems,  // 청크별 개별 오디오 저장
+                    failedChunks: failedChunkIndices.length > 0 ? failedChunkIndices : undefined,  // 실패 청크 기록
                     isTrimmed: false,
                     contextDuration: 0,
                     status: 'full',
@@ -644,6 +732,19 @@ export function App() {
                 setEditableSrtLines(adjustedSrt);
                 setOriginalSrtLines(JSON.parse(JSON.stringify(adjustedSrt)));
                 setHasTimestampEdits(false);
+
+                // 실패한 청크가 있으면 사용자에게 알림
+                if (failedChunkIndices.length > 0) {
+                    const successCount = totalChunks - failedChunkIndices.length;
+                    const failedChunkNumbers = failedChunkIndices.map(i => i + 1).join(', ');
+                    setTimeout(() => {
+                        alert(`⚠️ 오디오 생성 완료\n\n` +
+                            `✅ 성공: ${successCount}/${totalChunks} 청크\n` +
+                            `❌ 실패: 청크 ${failedChunkNumbers}\n\n` +
+                            `우측 패널에서 실패한 청크를 개별 재생성할 수 있습니다.\n` +
+                            `또는 [자막 재생성] 후 오류 라인을 확인하세요.`);
+                    }, 500);
+                }
             }
 
         } catch (e) {
@@ -679,27 +780,226 @@ export function App() {
         abortControllerRef.current = new AbortController();
 
         try {
-            const wavBase64 = await audioBufferToWavBase64(targetItem.audioBuffer);
-            const srt = await transcribeAudioWithSrt(wavBase64, srtSplitCharCount, abortControllerRef.current.signal, targetItem.scriptChunk);
-            const parsedSrt = parseSrt(srt);
-            const adjustedSrt = adjustSrtGaps(parsedSrt);
+            // audioChunks가 있으면 청크별 처리 (Flash/Pro 모델)
+            if (targetItem.audioChunks && targetItem.audioChunks.length > 0) {
+                console.log('[Regenerate SRT] Using chunk-based transcription for', targetItem.audioChunks.length, 'chunks');
 
-            setTtsResult(prev => ({
-                ...prev,
-                audioHistory: prev.audioHistory.map(item =>
-                    item.id === idToUse ? { ...item, srtLines: adjustedSrt, originalSrtLines: JSON.parse(JSON.stringify(adjustedSrt)) } : item
-                ),
-                srtContent: stringifySrt(adjustedSrt)
-            }));
+                const allSrtLines: SrtLine[] = [];
+                let currentOffsetMs = 0;
 
-            setEditableSrtLines(adjustedSrt);
-            setOriginalSrtLines(JSON.parse(JSON.stringify(adjustedSrt)));
-            setHasTimestampEdits(false);
-            setActiveAudioId(idToUse); // Ensure the edited audio becomes the active context
+                for (let i = 0; i < targetItem.audioChunks.length; i++) {
+                    const chunk = targetItem.audioChunks[i];
+
+                    // 청크 크기 확인
+                    const chunkSizeBytes = chunk.buffer.length * chunk.buffer.numberOfChannels * 2;
+                    const chunkSizeMB = chunkSizeBytes / (1024 * 1024);
+
+                    console.log(`[Regenerate SRT] Chunk ${i + 1}/${targetItem.audioChunks.length}: ${chunkSizeMB.toFixed(1)}MB, duration: ${chunk.durationMs.toFixed(0)}ms`);
+
+                    if (chunkSizeMB > 20) {
+                        console.warn(`[Chunk ${i + 1}] Too large (${chunkSizeMB.toFixed(1)}MB), skipping transcription`);
+                        setError(`청크 ${i + 1}이 너무 큽니다 (${chunkSizeMB.toFixed(1)}MB). 청크 분할 크기를 줄여주세요.`);
+                        continue;
+                    }
+
+                    setLoadingStatus(`자막 생성 중 (${i + 1}/${targetItem.audioChunks.length})...`);
+
+                    try {
+                        console.log(`[Regenerate SRT] Step ${i + 1}.1: Converting chunk to WAV base64...`);
+                        const wavBase64 = await audioBufferToWavBase64(chunk.buffer);
+                        console.log(`[Regenerate SRT] Step ${i + 1}.1 Complete: WAV size:`, wavBase64.length, 'chars');
+
+                        console.log(`[Regenerate SRT] Step ${i + 1}.2: Calling Gemini transcription...`);
+                        const chunkSrt = await transcribeAudioWithSrt(
+                            wavBase64,
+                            srtSplitCharCount,
+                            abortControllerRef.current.signal,
+                            chunk.text
+                        );
+                        console.log(`[Regenerate SRT] Step ${i + 1}.2 Complete: SRT length:`, chunkSrt.length);
+
+                        const parsedChunkSrt = parseSrt(chunkSrt);
+                        console.log(`[Regenerate SRT] Step ${i + 1}.3: Parsed ${parsedChunkSrt.length} SRT lines`);
+
+                        // 타임스탬프 오프셋 적용
+                        parsedChunkSrt.forEach(line => {
+                            const startMs = srtTimeToMs(line.startTime) + currentOffsetMs;
+                            const endMs = srtTimeToMs(line.endTime) + currentOffsetMs;
+                            allSrtLines.push({
+                                ...line,
+                                index: allSrtLines.length + 1,
+                                startTime: msToSrtTime(startMs),
+                                endTime: msToSrtTime(endMs)
+                            });
+                        });
+
+                        currentOffsetMs += chunk.durationMs;
+                        console.log(`[Regenerate SRT] Chunk ${i + 1} complete, total lines: ${allSrtLines.length}, next offset: ${currentOffsetMs}ms`);
+
+                    } catch (chunkError) {
+                        console.error(`[Regenerate SRT] Chunk ${i + 1} failed:`, chunkError);
+                        // 청크 실패 시 계속 진행 (일부 자막이라도 생성)
+                        if (chunkError instanceof Error && chunkError.name === 'AbortError') {
+                            throw chunkError; // 사용자 중단은 즉시 전파
+                        }
+                        // 다른 오류는 로그만 남기고 계속
+                        console.warn(`[Regenerate SRT] Continuing despite chunk ${i + 1} failure`);
+                        currentOffsetMs += chunk.durationMs; // 오프셋은 유지
+                    }
+                }
+
+                if (allSrtLines.length === 0) {
+                    throw new Error('모든 청크에서 자막 생성에 실패했습니다.');
+                }
+
+                console.log('[Regenerate SRT] All chunks processed, adjusting gaps...');
+                const adjustedSrt = adjustSrtGaps(allSrtLines);
+                console.log('[Regenerate SRT] Gaps adjusted, first 3 lines:', adjustedSrt.slice(0, 3).map(l => `${l.index}: ${l.startTime} --> ${l.endTime}`));
+
+                // ✅ 오디오 누락 감지 적용
+                const srtWithWarnings = detectMissingAudio(
+                    adjustedSrt,
+                    targetItem.audioChunks || [],
+                    targetItem.failedChunks
+                );
+                console.log('[Regenerate SRT] Applied warnings, lines with issues:', srtWithWarnings.filter(l => l.warningType).length);
+
+                setTtsResult(prev => ({
+                    ...prev,
+                    audioHistory: prev.audioHistory.map(item =>
+                        item.id === idToUse ? { ...item, srtLines: srtWithWarnings, originalSrtLines: JSON.parse(JSON.stringify(srtWithWarnings)) } : item
+                    ),
+                    srtContent: stringifySrt(srtWithWarnings)
+                }));
+
+                setEditableSrtLines(srtWithWarnings);
+                setOriginalSrtLines(JSON.parse(JSON.stringify(srtWithWarnings)));
+                setHasTimestampEdits(false);
+                setActiveAudioId(idToUse);
+
+                // ✅ 오디오 누락 라인 알림
+                const missingCount = srtWithWarnings.filter(l => l.warningType === 'no_audio').length;
+                const suspiciousCount = srtWithWarnings.filter(l => l.warningType === 'suspicious_timecode').length;
+
+                if (missingCount > 0 || suspiciousCount > 0) {
+                    const affectedChunks = [...new Set(
+                        srtWithWarnings
+                            .filter(l => l.warningType === 'no_audio')
+                            .map(l => l.chunkIndex)
+                            .filter(i => i !== undefined && i >= 0)
+                    )];
+
+                    setTimeout(() => {
+                        let alertMsg = `⚠️ 자막 분석 완료\n\n`;
+                        if (missingCount > 0) {
+                            alertMsg += `🔴 오디오 누락: ${missingCount}개 라인\n`;
+                            if (affectedChunks.length > 0) {
+                                alertMsg += `   영향받는 청크: ${affectedChunks.map(i => i! + 1).join(', ')}\n`;
+                            }
+                        }
+                        if (suspiciousCount > 0) {
+                            alertMsg += `🟡 의심스러운 타임코드: ${suspiciousCount}개 라인\n`;
+                        }
+                        alertMsg += `\n우측 자막 목록에서 오류 라인을 확인하세요.\n`;
+                        if (affectedChunks.length > 0) {
+                            alertMsg += `해당 청크를 개별 재생성할 수 있습니다.`;
+                        }
+                        alert(alertMsg);
+                    }, 500);
+                }
+
+            } else {
+                // Native Audio 모델 - 기존 방식 유지 (전체 오디오 한 번에 처리)
+                console.log('[Regenerate SRT] Using single-pass transcription (Native Audio model)');
+
+                console.log('[Regenerate SRT] Step 1: Converting audio to WAV base64...');
+                const wavBase64 = await audioBufferToWavBase64(targetItem.audioBuffer);
+                console.log('[Regenerate SRT] Step 1 Complete: WAV size:', wavBase64.length, 'chars');
+
+                console.log('[Regenerate SRT] Step 2: Calling Gemini transcription...');
+                console.log('[Regenerate SRT] Step 2 Params: srtSplitCharCount =', srtSplitCharCount, ', scriptChunk length =', targetItem.scriptChunk.length);
+
+                const srt = await transcribeAudioWithSrt(wavBase64, srtSplitCharCount, abortControllerRef.current.signal, targetItem.scriptChunk);
+                console.log('[Regenerate SRT] Step 3: Received SRT, length:', srt.length);
+
+                const parsedSrt = parseSrt(srt);
+                console.log('[Regenerate SRT] Step 4: Parsed SRT lines:', parsedSrt.length);
+
+                const adjustedSrt = adjustSrtGaps(parsedSrt);
+                console.log('[Regenerate SRT] Step 5: Adjusted gaps, first 3 lines:', adjustedSrt.slice(0, 3).map(l => `${l.index}: ${l.startTime} --> ${l.endTime}`));
+
+                // ✅ 오디오 누락 감지 적용
+                const srtWithWarnings = detectMissingAudio(
+                    adjustedSrt,
+                    targetItem.audioChunks || [],
+                    targetItem.failedChunks
+                );
+                console.log('[Regenerate SRT] Step 6: Applied warnings, lines with issues:', srtWithWarnings.filter(l => l.warningType).length);
+
+                setTtsResult(prev => ({
+                    ...prev,
+                    audioHistory: prev.audioHistory.map(item =>
+                        item.id === idToUse ? { ...item, srtLines: srtWithWarnings, originalSrtLines: JSON.parse(JSON.stringify(srtWithWarnings)) } : item
+                    ),
+                    srtContent: stringifySrt(srtWithWarnings)
+                }));
+
+                setEditableSrtLines(srtWithWarnings);
+                setOriginalSrtLines(JSON.parse(JSON.stringify(srtWithWarnings)));
+                setHasTimestampEdits(false);
+                setActiveAudioId(idToUse);
+
+                // ✅ 오디오 누락 라인 알림
+                const missingCount = srtWithWarnings.filter(l => l.warningType === 'no_audio').length;
+                const suspiciousCount = srtWithWarnings.filter(l => l.warningType === 'suspicious_timecode').length;
+
+                if (missingCount > 0 || suspiciousCount > 0) {
+                    const affectedChunks = [...new Set(
+                        srtWithWarnings
+                            .filter(l => l.warningType === 'no_audio')
+                            .map(l => l.chunkIndex)
+                            .filter(i => i !== undefined && i >= 0)
+                    )];
+
+                    setTimeout(() => {
+                        let alertMsg = `⚠️ 자막 분석 완료\n\n`;
+                        if (missingCount > 0) {
+                            alertMsg += `🔴 오디오 누락: ${missingCount}개 라인\n`;
+                            if (affectedChunks.length > 0) {
+                                alertMsg += `   영향받는 청크: ${affectedChunks.map(i => i! + 1).join(', ')}\n`;
+                            }
+                        }
+                        if (suspiciousCount > 0) {
+                            alertMsg += `🟡 의심스러운 타임코드: ${suspiciousCount}개 라인\n`;
+                        }
+                        alertMsg += `\n우측 자막 목록에서 오류 라인을 확인하세요.\n`;
+                        if (affectedChunks.length > 0) {
+                            alertMsg += `해당 청크를 개별 재생성할 수 있습니다.`;
+                        }
+                        alert(alertMsg);
+                    }, 500);
+                }
+            }
 
         } catch (e) {
+            console.error('[Regenerate SRT] ERROR:', e);
             if (e instanceof Error && e.name !== 'AbortError') {
-                setError(e.message);
+                console.error('[Regenerate SRT] Error name:', e.name);
+                console.error('[Regenerate SRT] Error message:', e.message);
+                console.error('[Regenerate SRT] Error stack:', e.stack);
+
+                // 상세한 에러 정보 제공
+                let userMessage = e.message;
+                if (e.message.includes('quota') || e.message.includes('429')) {
+                    userMessage = 'API 할당량 초과. 잠시 후 다시 시도해주세요.';
+                } else if (e.message.includes('timeout')) {
+                    userMessage = '요청 시간 초과. 오디오가 너무 깁니다.';
+                } else if (e.message.includes('base64')) {
+                    userMessage = '오디오 파일이 너무 큽니다. 청크 분할 크기를 줄여주세요.';
+                }
+
+                setError(userMessage);
+                alert(`자막 재생성 오류:\n\n${userMessage}`);
             }
         } finally {
             setIsLoading(false);
