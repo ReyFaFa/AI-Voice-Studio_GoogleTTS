@@ -1492,7 +1492,7 @@ export const MainContent: React.FC<MainContentProps> = ({
                         )}
 
                         {/* Display Current Audio Item */}
-                        {currentAudioItem && (
+                        {currentAudioItem && !isLoading && (
                             <div key={currentAudioItem.id} className="flex-shrink-0">
                                 <AudioPlayer
                                     ref={audioPlayerRef}
