@@ -492,13 +492,10 @@ const blobToBase64 = async (blob: Blob): Promise<string> => {
         const arrayBuffer = await blob.arrayBuffer();
         const uint8Array = new Uint8Array(arrayBuffer);
 
-        // 청크 단위로 base64 변환 (메모리 효율)
+        // 청크 단위로 base64 변환 (메모리 효율, Stack Overflow 방지)
         let binary = '';
-        const chunkSize = 8192;
-
-        for (let i = 0; i < uint8Array.length; i += chunkSize) {
-            const chunk = uint8Array.subarray(i, i + chunkSize);
-            binary += String.fromCharCode.apply(null, Array.from(chunk));
+        for (let i = 0; i < uint8Array.length; i++) {
+            binary += String.fromCharCode(uint8Array[i]);
         }
 
         const base64 = btoa(binary);
