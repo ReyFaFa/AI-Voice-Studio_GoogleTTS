@@ -1568,6 +1568,34 @@ export function App() {
         setHasTimestampEdits(true);
     };
 
+    const handleFillSrtGaps = () => {
+        setEditableSrtLines(prev => {
+            const newLines = [...prev];
+            let filledCount = 0;
+            for (let i = 0; i < newLines.length - 1; i++) {
+                const currentEnd = srtTimeToMs(newLines[i].endTime);
+                const nextStart = srtTimeToMs(newLines[i + 1].startTime);
+                const gap = nextStart - currentEnd;
+                if (gap > 0 && gap <= 1000) {
+                    newLines[i] = { ...newLines[i], endTime: newLines[i + 1].startTime };
+                    filledCount++;
+                }
+            }
+
+            setTtsResult(prevTts => ({
+                ...prevTts,
+                srtContent: stringifySrt(newLines),
+                audioHistory: prevTts.audioHistory.map(item =>
+                    item.id === activeAudioId ? { ...item, srtLines: newLines } : item
+                )
+            }));
+
+            console.log(`[Fill SRT Gaps] ${filledCount}개 구간의 빈 공간을 채웠습니다.`);
+            return newLines;
+        });
+        setHasTimestampEdits(true);
+    };
+
     const handleReconstructAudio = async () => {
         // Find the audio item that matches the current editing context
         // Defaults to the latest if activeAudioId is somehow null
@@ -1728,6 +1756,7 @@ export function App() {
                         onSplitSrtLine={handleSplitSrtLine}
                         onResetSrt={handleResetSrt}
                         onBulkTimeShift={handleBulkTimeShift}
+                        onFillSrtGaps={handleFillSrtGaps}
                         onReconstructAudio={handleReconstructAudio}
                         hasTimestampEdits={hasTimestampEdits}
                         isTimestampSyncEnabled={isTimestampSyncEnabled}

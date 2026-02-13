@@ -96,6 +96,7 @@ export interface MainContentProps {
     onSplitSrtLine: (index: number, cursorPosition: number) => void;
     onResetSrt: () => void;
     onBulkTimeShift: (shiftMs: number) => void;
+    onFillSrtGaps: () => void;
     onReconstructAudio: () => void;
     hasTimestampEdits: boolean;
     isTimestampSyncEnabled: boolean;
@@ -358,6 +359,7 @@ export const MainContent: React.FC<MainContentProps> = ({
     onSplitSrtLine,
     onResetSrt,
     onBulkTimeShift,
+    onFillSrtGaps,
     onReconstructAudio,
     hasTimestampEdits,
     isTimestampSyncEnabled,
@@ -1625,6 +1627,13 @@ export const MainContent: React.FC<MainContentProps> = ({
                                         </button>
                                         <button onClick={() => setSrtMode('edit')} className={`px-4 py-1.5 text-sm font-semibold rounded-md flex items-center gap-2 ${srtMode === 'edit' ? 'bg-indigo-600 text-white' : 'bg-gray-700 hover:bg-gray-600 text-gray-300'}`}>
                                             <PencilIcon className="w-5 h-5" /> 수정
+                                        </button>
+                                        <button
+                                            onClick={onFillSrtGaps}
+                                            className="px-3 py-1.5 text-sm font-semibold rounded-md bg-gray-700 hover:bg-gray-600 text-gray-300 transition-colors"
+                                            title="자막 간 1초 이내 빈 구간을 채워 자막이 끊김 없이 연속 표시되도록 합니다"
+                                        >
+                                            자막빈공간채우기
                                         </button>
                                     </div>
                                     <div className="flex items-center gap-4">
