@@ -219,7 +219,11 @@ export const trimTrailingSilence = (
     const minSilenceSamples = Math.floor(minSilenceDuration * sampleRate);
 
     // 동적 threshold 계산: 최대 진폭의 5% 또는 기본값 중 큰 값 사용
-    const maxAmplitude = Math.max(...Array.from(channelData).map(Math.abs));
+    let maxAmplitude = 0;
+    for (let i = 0; i < channelData.length; i++) {
+        const abs = Math.abs(channelData[i]);
+        if (abs > maxAmplitude) maxAmplitude = abs;
+    }
     const dynamicThreshold = Math.max(threshold, maxAmplitude * 0.05);
 
     console.log(`[Trim Trailing Silence] Dynamic threshold: ${dynamicThreshold.toFixed(4)} (max amplitude: ${maxAmplitude.toFixed(4)})`);

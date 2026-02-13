@@ -476,7 +476,11 @@ ${processedPrompt}`;
 
     const response = result; // result inside (generalAI as any).models.generateContent is the parsed response directly
 
-    console.log("[Gemini API Full Response]", JSON.stringify(response, null, 2));
+    try {
+      console.log("[Gemini API Response] candidates:", response.candidates?.length, "finishReason:", response.candidates?.[0]?.finishReason);
+    } catch (logErr) {
+      console.log("[Gemini API Response] (로그 직렬화 실패, 응답 객체 순환 참조 가능)");
+    }
 
     const candidate = response.candidates?.[0];
 
