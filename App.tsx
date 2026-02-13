@@ -649,12 +649,23 @@ export function App() {
                 const failedChunkIndices: number[] = [];
 
                 for (let i = 0; i < totalChunks; i++) {
+                    // 중단 신호 확인
+                    if (abortControllerRef.current?.signal.aborted) {
+                        throw new DOMException('사용자에 의해 중단되었습니다.', 'AbortError');
+                    }
+
                     const chunkText = textChunks[i];
 
                     try {
                         // Add a small delay between requests to avoid 429 Too Many Requests
                         if (i > 0) {
-                            await sleep(5000);
+                            await new Promise<void>((resolve, reject) => {
+                                const signal = abortControllerRef.current?.signal;
+                                if (signal?.aborted) { reject(new DOMException('중단됨', 'AbortError')); return; }
+                                const timer = setTimeout(() => { signal?.removeEventListener('abort', onAbort); resolve(); }, 5000);
+                                const onAbort = () => { clearTimeout(timer); reject(new DOMException('중단됨', 'AbortError')); };
+                                signal?.addEventListener('abort', onAbort, { once: true });
+                            });
                         }
 
                         console.log(`[Chunk Loop] Starting chunk ${i + 1}/${totalChunks}...`);
@@ -739,6 +750,11 @@ export function App() {
                         console.log(`[Chunk Loop] Successfully finished chunk ${i + 1}/${totalChunks}.`);
 
                     } catch (chunkError) {
+                        // 사용자 중단은 즉시 전파
+                        if (chunkError instanceof DOMException && chunkError.name === 'AbortError') {
+                            throw chunkError;
+                        }
+
                         console.error(`[Chunk Loop] Error in chunk ${i + 1}:`, chunkError);
 
                         // 첫 번째 청크 실패는 치명적 오류
@@ -748,7 +764,6 @@ export function App() {
                         failedChunkIndices.push(i);
                         setError(`청크 ${i + 1} 생성 실패. 다음 청크 계속 진행 중...`);
                         console.log(`[Chunk Loop] Chunk ${i + 1} failed, continuing to next chunk...`);
-                        // break 제거 - 다음 청크로 계속 진행!
                     }
                 }
 
