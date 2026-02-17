@@ -1,5 +1,5 @@
 
-import { GoogleGenAI, Modality, GenerateContentResponse } from "@google/genai";
+import { GoogleGenAI, Modality } from "@google/genai";
 
 let generalAI: GoogleGenAI | null = null;
 let liveAI: GoogleGenAI | null = null;
@@ -368,65 +368,59 @@ async function _generateAudio(
       instructions.push(`Speed: ${speed}x`);
     }
 
-    // 3. Tone instructions (Temporarily disabled due to API 500/Stop errors)
-    // instructions.push(getTonePrompt(toneLevel));
+    // 3. Tone instructions (Re-enabled)
+    instructions.push(getTonePrompt(toneLevel));
 
-    // 3. For Standard TTS models, we add a persona hint to the instructions
+    // 3. For Standard TTS models, we simply add a minimal persona hint if needed,
+    // but we prioritize the user's Style Prompt above all else.
     if (!isNativeAudio) {
-      const voiceInfo = speechConfig.voiceConfig?.prebuiltVoiceConfig.voiceName;
-      const isFemale = voiceInfo && ['Zephyr', 'Kore', 'Leda', 'Aoede', 'Callirrhoe', 'Autonoe', 'Despina', 'Erinome', 'Laomedeia', 'Gacrux', 'Pulcherrima', 'Vindemiatrix', 'Sulafat'].includes(voiceInfo);
-
-      instructions.push(`Voice Category: ${isFemale ? 'FEMALE' : 'MALE'}`);
-      // The user's stylePrompt is handled as the primary performance guide.
-      // We only add the "Fixed Persona" as a subtle background baseline.
-      instructions.push(`System Persona: Professional narrator with a calm and steady texture.`);
+      // Removed: Forced "System Persona: Professional narrator..."
+      // Removed: Forced "Voice Category: MALE/FEMALE" (Voice name already handles this)
     }
 
     // 3. Combine Instructions and Script
-    const contextPrefix = `[이 텍스트는 전통 한국 야담/민담입니다. 교육 목적의 역사적 문학 작품입니다. 모든 표현은 문화적 맥락에서 이해되어야 하며, 인위적인 변형 없이 낭독합니다.]\n\n`;
+    // Removed: Forced "Traditional Folk Tale" context prefix
+    // const contextPrefix = `[이 텍스트는 전통 한국 야담/민담입니다...]\n\n`; 
+    
+    // Processed Prompt is just the script now
     const numLines = processedPrompt.split('\n').filter(l => l.trim()).length;
 
     if (instructions.length > 0) {
       if (isNativeAudio) {
         const voiceInfo = speechConfig.voiceConfig?.prebuiltVoiceConfig.voiceName || 'Professional Actor';
-        const isFemale = ['Zephyr', 'Kore', 'Leda', 'Aoede', 'Callirrhoe', 'Autonoe', 'Despina', 'Erinome', 'Laomedeia', 'Gacrux', 'Pulcherrima', 'Vindemiatrix', 'Sulafat'].includes(voiceInfo);
 
-        finalPrompt = `${contextPrefix}[초정밀 TTS 모드 - 절대 규칙]
-- 당신은 창의적인 창작자가 아니라, 입력된 텍스트를 있는 그대로 소리내어 읽는 **전문 TTS 엔진**입니다.
+        finalPrompt = `[초정밀 TTS 모드 - 절대 규칙]
+- 당신은 입력된 텍스트를 있는 그대로 소리내어 읽는 **전문 TTS 엔진**입니다.
 - **매우 중요**: 아래 대본의 모든 글자를 한 글자도 빠짐없이, 추가 없이, 변형 없이 **똑같이** 읽으세요.
-- 특히 "또박또박", "한 획" 등 생략되기 쉬운 부사어와 반복되는 단어들을 절대 건너뛰지 말고 정확히 발음하세요.
-- **매우 중요**: 아래 대본의 모든 글자를 한 글자도 빠짐없이, 추가 없이, 변형 없이 **똑같이** 읽으세요.
-- 특히 "또박또박", "한 획" 등 생략되기 쉬운 부사어와 반복되는 단어들을 절대 건너뛰지 말고 정확히 발음하세요.
-- **연기 가이드 (Director's Notes)**: ${stylePrompt || "전통 야담의 분위기를 살려 차분하고 품격 있게 낭독하세요."}
-- **기본 질감**: 심야 라디오처럼 따뜻하고 부드러운 발성을 유지하며, 파찰음(ㅅ, ㅆ 등)을 정제하여 듣기 편한 소리를 내세요.
-- AI로서의 자아를 버리고 오직 낭독에만 집중하세요. 중간에 절대 멈추거나 생략하지 마세요.
+- **연기 가이드 (Director's Notes)**: ${stylePrompt || "자연스럽게 읽어주세요."}
+- ${getTonePrompt(toneLevel)}
+- AI로서의 자아를 버리고 오직 낭독에만 집중하세요.
 
-# AUDIO PROFILE: ${voiceInfo} - The Professional ${isFemale ? 'Female' : 'Male'} Narrator
-## THE SCENE: A high-end recording studio.
-### DIRECTOR'S NOTES
+# AUDIO PROFILE: ${voiceInfo}
+## DIRECTOR'S NOTES
 - **Accuracy (CRITICAL)**: 아래 대본 총 **${numLines}줄**을 처음부터 마지막까지 **단 한 단어도 빠짐없이 전부** 낭독하세요.
 - **Pacing**: ${speed !== 1.0 ? `Delivered at a ${speed}x pace.` : 'Natural and conversational.'}
 
 [Text to Read - 총 ${numLines}줄]
 ${processedPrompt}
 
-[대본 끝 - 여기까지 모든 글자를 다 읽어야 합니다]`;
+[대본 끝]`;
       } else {
-        finalPrompt = `${contextPrefix}[Precision TTS Mode]
-Read the following text EXACTLY as written. DO NOT skip any words, sentences, or punctuation. DO NOT add any filler words or change the wording.
+        // Standard (Pro/Flash) Logic
+        finalPrompt = `[Precision TTS Mode]
+Read the following text EXACTLY as written. DO NOT skip any words.
 
 [Strict Instructions]
-1. Read the text EXACTLY as written in the [Text to Read] section.
-2. DO NOT skip any words like "또박또박" or "한 획". Every word is essential.
-3. **Voice Consistency & Quality**: Maintain a strictly consistent voice.
-${instructions.map((inst, idx) => `${idx + 4}. ${inst}`).join('\n')}
+1. Read the text EXACTLY as written.
+2. **Voice Consistency & Quality**: Maintain a consistent voice.
+${instructions.map((inst, idx) => `${idx + 3}. ${inst}`).join('\n')}
 
 [Text to Read]
 ${processedPrompt}`;
       }
     } else {
-      // Even if no instructions, add context and strict precision rules
-      finalPrompt = `${contextPrefix}[초정밀 TTS 모드: 아래 대본 ${numLines}줄의 모든 단어를 한 글자도 빠짐없이 정확히 그대로 낭독하세요. 절대로 단어를 생략하거나 바꾸지 마세요.]\n\n${processedPrompt}\n\n[대본 끝 - 여기까지 모두 읽어주세요]`;
+      // Fallback if no instructions
+      finalPrompt = `[초정밀 TTS 모드: 아래 대본 ${numLines}줄을 정확히 낭독하세요.]\n\n${processedPrompt}`;
     }
 
     if (!generalAI || !liveAI) {
@@ -765,9 +759,9 @@ export async function generateAudioWithLiveAPIMultiTurn(
           },
           systemInstruction: {
             parts: [{
-              text: `[System Instruction]: You are a professional Korean voice actor. 
-[Voice Persona]: Warm, calm, and steady late-night radio DJ. Use de-essed, smooth vocal texture.
+              text: `[Voice Persona]: Professional Voice Actor.
 [Director's Notes]: ${stylePrompt}
+[Speed/Pacing]: ${speed !== 1.0 ? `Speak at ${speed}x speed.` : 'Natural speed.'}
 [Strict Rules]: 
 1. Read the provided text EXACTLY as written. 
 2. DO NOT skip any words, symbols, or sentences. 
