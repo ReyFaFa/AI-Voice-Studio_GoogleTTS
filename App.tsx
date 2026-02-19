@@ -535,8 +535,7 @@ export function App() {
 
         setIsPreviewLoading(prev => ({ ...prev, [voiceId]: true }));
         try {
-            // Preview always uses normal speed
-            const base64Pcm = await previewVoice(voiceId);
+            const base64Pcm = await previewVoice(voiceId, selectedModel, speechSpeed, toneLevel, stylePrompt);
             const blob = createWavBlobFromBase64Pcm(base64Pcm);
             const url = URL.createObjectURL(blob);
             const audio = new Audio(url);
@@ -679,7 +678,8 @@ export function App() {
                             speechSpeed,
                             toneLevel,
                             stylePrompt,
-                            abortControllerRef.current.signal
+                            abortControllerRef.current.signal,
+                            { chunkIndex: i, totalChunks: totalChunks }
                         );
 
                         setLoadingStatus(`오디오 처리 중 (${i + 1}/${totalChunks})...`);
@@ -1176,6 +1176,34 @@ export function App() {
             await downloadChunksAsZip(targetItem.audioChunks, `tts-${Date.now()}`);
         } catch (e) {
             setError(e instanceof Error ? e.message : "ZIP 다운로드 중 오류가 발생했습니다.");
+        }
+    };
+
+    // 개별 청크 다운로드 핸들러
+    const handleDownloadChunk = (audioItemId: string, chunkIndex: number) => {
+        const targetItem = ttsResult.audioHistory.find(item => item.id === audioItemId);
+        if (!targetItem?.audioChunks?.[chunkIndex]) {
+            setError('다운로드할 청크를 찾을 수 없습니다.');
+            return;
+        }
+
+        const chunk = targetItem.audioChunks[chunkIndex];
+
+        try {
+            // WAV 파일로 인코딩
+            const wavBlob = encodeAudioBufferToWavBlob(chunk.buffer);
+
+            // 다운로드
+            const url = URL.createObjectURL(wavBlob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `chunk-${String(chunkIndex + 1).padStart(2, '0')}.wav`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+        } catch (e) {
+            setError(e instanceof Error ? e.message : "청크 다운로드 중 오류가 발생했습니다.");
         }
     };
 
@@ -1770,6 +1798,7 @@ export function App() {
                         onApproveSample={handleApproveSampleAndGenerate}
                         onRejectSample={handleRejectSample}
                         onRegenerateChunk={handleRegenerateChunk}
+                        onDownloadChunk={handleDownloadChunk}
                         onCopyScriptToSrt={handleCopyScriptToSrt}
                         onUpdateSrtFromCapCut={handleUpdateSrtFromCapCut}
                     />

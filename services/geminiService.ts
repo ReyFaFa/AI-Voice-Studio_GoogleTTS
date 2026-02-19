@@ -118,6 +118,35 @@ if (storedKey) {
   setApiKey(process.env.API_KEY);
 }
 
+
+const TONE_LEVEL_MAP: Record<number, { ko: string; en: string }> = {
+    1: {
+        ko: '매우 차분하고 낮은 톤으로 읽으세요.',
+        en: 'Read in a very calm and low tone.'
+    },
+    2: {
+        ko: '차분하고 편안한 톤으로 읽으세요.',
+        en: 'Read in a calm and relaxed tone.'
+    },
+    3: {
+        ko: '자연스럽고 중립적인 톤으로 읽으세요.',
+        en: 'Read in a natural and neutral tone.'
+    },
+    4: {
+        ko: '밝고 활기찬 톤으로 읽으세요.',
+        en: 'Read in a bright and lively tone.'
+    },
+    5: {
+        ko: '매우 밝고 열정적인 톤으로 읽으세요.',
+        en: 'Read in a very bright and enthusiastic tone.'
+    }
+};
+
+interface ChunkInfo {
+    chunkIndex: number;
+    totalChunks: number;
+}
+
 /**
  * 속도 값에 따른 상세한 Pacing 프롬프트 반환
  */
@@ -323,6 +352,42 @@ export function msToSrtTime(ms: number): string {
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')},${String(milliseconds).padStart(3, '0')}`;
 }
 
+function buildTtsPrompt(
+    text: string,
+    stylePrompt: string | undefined,
+    speed: number,
+    toneLevel: number,
+    isKorean: boolean,
+    chunkInfo?: ChunkInfo
+): string {
+    const systemInstructions: string[] = [];
+
+    const tone = TONE_LEVEL_MAP[toneLevel] || TONE_LEVEL_MAP[3];
+    systemInstructions.push(isKorean ? tone.ko : tone.en);
+
+    if (speed !== 1.0) {
+        systemInstructions.push(isKorean
+            ? `속도: ${speed}x`
+            : `Speed: ${speed}x`
+        );
+    }
+
+    if (chunkInfo && chunkInfo.chunkIndex > 0) {
+        systemInstructions.push(isKorean
+            ? '이전과 동일한 톤 유지. 시작 에너지 높이지 말 것.'
+            : 'Maintain same tone. Do not raise energy at start.'
+        );
+    }
+
+    const userPromptSection = stylePrompt?.trim() ? `${stylePrompt.trim()}\n\n` : '';
+
+    return `${userPromptSection}[System]
+${systemInstructions.join('\n')}
+
+[Transcript]
+${text}`;
+}
+
 async function _generateAudio(
   prompt: string,
   modelName: string,
@@ -330,7 +395,8 @@ async function _generateAudio(
   speed: number,
   toneLevel: number = 3,
   stylePrompt?: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  chunkInfo?: ChunkInfo
 ): Promise<string> {
   if (!generalAI || !liveAI) {
     throw new Error("API 키가 설정되지 않았습니다. 우측 상단 설정 아이콘을 눌러 API 키를 입력해주세요.");
@@ -355,77 +421,21 @@ async function _generateAudio(
     };
 
     // Construct the prompt with instructions for steerability
-    let finalPrompt = prompt;
-    const instructions: string[] = [];
+    const isKorean = /[가-힣]/.test(prompt);
 
-    // 1. Add Style Instructions if present
-    if (stylePrompt && stylePrompt.trim().length > 0) {
-      instructions.push(`Style/Tone: ${stylePrompt.trim()}`);
-    }
-
-    // 2. Add Speed Instructions if not normal
-    if (speed !== 1.0) {
-      instructions.push(`Speed: ${speed}x`);
-    }
-
-    // 3. Tone instructions (Re-enabled)
-    instructions.push(getTonePrompt(toneLevel));
-
-    // 3. For Standard TTS models, we simply add a minimal persona hint if needed,
-    // but we prioritize the user's Style Prompt above all else.
-    if (!isNativeAudio) {
-      // Removed: Forced "System Persona: Professional narrator..."
-      // Removed: Forced "Voice Category: MALE/FEMALE" (Voice name already handles this)
-    }
-
-    // 3. Combine Instructions and Script
-    // Removed: Forced "Traditional Folk Tale" context prefix
-    // const contextPrefix = `[이 텍스트는 전통 한국 야담/민담입니다...]\n\n`; 
-    
-    // Processed Prompt is just the script now
-    const numLines = processedPrompt.split('\n').filter(l => l.trim()).length;
-
-    if (instructions.length > 0) {
-      if (isNativeAudio) {
-        const voiceInfo = speechConfig.voiceConfig?.prebuiltVoiceConfig.voiceName || 'Professional Actor';
-
-        finalPrompt = `[초정밀 TTS 모드 - 절대 규칙]
-- 당신은 입력된 텍스트를 있는 그대로 소리내어 읽는 **전문 TTS 엔진**입니다.
-- **매우 중요**: 아래 대본의 모든 글자를 한 글자도 빠짐없이, 추가 없이, 변형 없이 **똑같이** 읽으세요.
-- **연기 가이드 (Director's Notes)**: ${stylePrompt || "자연스럽게 읽어주세요."}
-- ${getTonePrompt(toneLevel)}
-- AI로서의 자아를 버리고 오직 낭독에만 집중하세요.
-
-# AUDIO PROFILE: ${voiceInfo}
-## DIRECTOR'S NOTES
-- **Accuracy (CRITICAL)**: 아래 대본 총 **${numLines}줄**을 처음부터 마지막까지 **단 한 단어도 빠짐없이 전부** 낭독하세요.
-- **Pacing**: ${speed !== 1.0 ? `Delivered at a ${speed}x pace.` : 'Natural and conversational.'}
-
-[Text to Read - 총 ${numLines}줄]
-${processedPrompt}
-
-[대본 끝]`;
-      } else {
-        // Standard (Pro/Flash) Logic
-        finalPrompt = `[Precision TTS Mode]
-Read the following text EXACTLY as written. DO NOT skip any words.
-
-[Strict Instructions]
-1. Read the text EXACTLY as written.
-2. **Voice Consistency & Quality**: Maintain a consistent voice.
-${instructions.map((inst, idx) => `${idx + 3}. ${inst}`).join('\n')}
-
-[Text to Read]
-${processedPrompt}`;
-      }
-    } else {
-      // Fallback if no instructions
-      finalPrompt = `[초정밀 TTS 모드: 아래 대본 ${numLines}줄을 정확히 낭독하세요.]\n\n${processedPrompt}`;
-    }
+    const finalPrompt = buildTtsPrompt(
+        processedPrompt,
+        stylePrompt,
+        speed,
+        toneLevel,
+        isKorean,
+        chunkInfo
+    );
 
     if (!generalAI || !liveAI) {
       throw new Error("API 키가 설정되지 않았습니다.");
     }
+
 
     // --- CASE 1: Multimodal Live API (WebSocket) for Native Audio Dialog ---
     if (isNativeAudio) {
@@ -536,7 +546,8 @@ export const generateSingleSpeakerAudio = (
   speed: number = 1.0,
   toneLevel: number = 3,
   stylePrompt?: string,
-  signal?: AbortSignal
+  signal?: AbortSignal,
+  chunkInfo?: ChunkInfo
 ): Promise<string> => {
   const speechConfig: SpeechConfig = {
     voiceConfig: {
@@ -546,14 +557,19 @@ export const generateSingleSpeakerAudio = (
     },
     languageCode: 'ko-KR',
   };
-  return _generateAudio(prompt, modelName, speechConfig, speed, toneLevel, stylePrompt, signal);
+  return _generateAudio(prompt, modelName, speechConfig, speed, toneLevel, stylePrompt, signal, chunkInfo);
 };
 
-export const previewVoice = (voiceName: string): Promise<string> => {
+export const previewVoice = (
+  voiceName: string,
+  modelName?: string,
+  speed: number = 1.0,
+  toneLevel: number = 3,
+  stylePrompt?: string
+): Promise<string> => {
   const sampleText = `안녕하세요, 이것은 제 목소리입니다. 이 목소리로 멋진 오디오 콘텐츠를 만들 수 있습니다.`;
-  // Use default Flash model for previews to save cost/latency
-  const defaultModel = "gemini-2.5-flash-preview-tts";
-  return generateSingleSpeakerAudio(sampleText, voiceName, defaultModel, 1.0);
+  const model = modelName || "gemini-2.5-flash-preview-tts";
+  return generateSingleSpeakerAudio(sampleText, voiceName, model, speed, toneLevel, stylePrompt);
 };
 
 export const transcribeAudioWithSrt = async (

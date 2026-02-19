@@ -25,10 +25,10 @@ import {
     WrapTextIcon,
     XCircleIcon
 } from '../constants';
+import { matchSubtitlesWithAI } from '../services/geminiService';
 import { Preset, ScriptLine, SrtLine, Voice } from '../types';
 import { AudioPlayer, AudioPlayerHandle } from './AudioPlayer';
 import { encodeAudioBufferToWavBlob, msToSrtTime, parseSrt, srtTimeToMs } from './Header';
-import { matchSubtitlesWithAI } from '../services/geminiService';
 import { ScriptAnalysis } from './ScriptAnalysis';
 import { SilenceRemover } from './SilenceRemover';
 
@@ -111,6 +111,7 @@ export interface MainContentProps {
     onApproveSample: () => void;
     onRejectSample: () => void;
     onRegenerateChunk: (audioItemId: string, chunkIndex: number) => void;
+    onDownloadChunk: (audioItemId: string, chunkIndex: number) => void;
     // CapCut Sync Props (NEW)
     onCopyScriptToSrt: (srtLines: SrtLine[]) => void;
     onUpdateSrtFromCapCut: (srtLines: SrtLine[]) => void;
@@ -373,6 +374,7 @@ export const MainContent: React.FC<MainContentProps> = ({
     onApproveSample,
     onRejectSample,
     onRegenerateChunk,
+    onDownloadChunk,
     onCopyScriptToSrt,
     onUpdateSrtFromCapCut,
 }) => {
@@ -1223,17 +1225,18 @@ export const MainContent: React.FC<MainContentProps> = ({
                                         <span className="text-sm font-medium">Pro TTS</span>
                                         <span className="text-[10px] bg-yellow-900/50 text-yellow-300 px-1.5 py-0.5 rounded border border-yellow-700">고품질</span>
                                     </label>
-                                    <label className={`flex-1 min-w-[120px] flex items-center justify-center gap-2 p-2.5 rounded-md border cursor-pointer transition-all ${selectedModel === 'gemini-2.5-flash-native-audio-dialog-preview' ? 'bg-emerald-900/50 border-emerald-500 text-emerald-200' : 'bg-gray-700/50 border-gray-600 text-gray-400 hover:bg-gray-700'}`}>
+                                    <label className="flex-1 min-w-[120px] flex items-center justify-center gap-2 p-2.5 rounded-md border bg-gray-700/30 border-gray-600/50 text-gray-500 cursor-not-allowed opacity-50"
+                                        title="현재 사용 불가"
+                                    >
                                         <input
                                             type="radio"
                                             name="model"
                                             value="gemini-2.5-flash-native-audio-dialog-preview"
-                                            checked={selectedModel === 'gemini-2.5-flash-native-audio-dialog-preview'}
-                                            onChange={(e) => setSelectedModel(e.target.value)}
+                                            disabled={true}
                                             className="hidden"
                                         />
                                         <span className="text-sm font-medium">Native Audio</span>
-                                        <span className="text-[10px] bg-emerald-700/30 text-emerald-300 px-1.5 py-0.5 rounded border border-emerald-700">무제한</span>
+                                        <span className="text-[10px] bg-gray-700/50 text-gray-500 px-1.5 py-0.5 rounded border border-gray-600">(비활성)</span>
                                     </label>
                                 </div>
                             </div>
@@ -1553,6 +1556,14 @@ export const MainContent: React.FC<MainContentProps> = ({
                                                             title="이 구간 재생성"
                                                         >
                                                             <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" /></svg>
+                                                        </button>
+                                                        <button
+                                                            onClick={() => onDownloadChunk(currentAudioItem.id, idx)}
+                                                            disabled={isLoading}
+                                                            className="p-1 text-gray-400 hover:text-green-400 disabled:opacity-30 transition-colors flex-shrink-0"
+                                                            title="이 구간 다운로드"
+                                                        >
+                                                            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4" /></svg>
                                                         </button>
                                                     </div>
                                                 ))}

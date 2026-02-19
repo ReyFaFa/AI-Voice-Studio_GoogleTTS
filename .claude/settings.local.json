@@ -19,7 +19,8 @@
       "Bash(git add:*)",
       "Bash(git commit -m \"$\\(cat <<''EOF''\nfix: Make stop button immediately halt TTS chunk generation\n\n- Add abort signal check at loop start for immediate cancellation\n- Replace sleep\\(5000\\) with abort-aware delay that responds to stop button\n- Propagate AbortError immediately instead of continuing to next chunk\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
       "Bash(git commit -m \"$\\(cat <<''EOF''\nfix: Replace String.fromCharCode.apply with safe loop in blobToBase64\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
-      "Bash(git commit:*)"
+      "Bash(git commit:*)",
+      "Bash(npm run build:*)"
     ]
   }
 }
