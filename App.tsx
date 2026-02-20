@@ -635,7 +635,8 @@ export function App() {
 
             } else {
                 // --- LEGACY STRATEGY: Standard Chunk-based TTS + Transcription ---
-                const textChunks = splitTextIntoChunks(fullText, 2500, 50);
+                // 청크 크기 제한: Gemini TTS 후반부 치찰음/쇳소리 방지 (3분+ 시 고주파 아티팩트 누적)
+                const textChunks = splitTextIntoChunks(fullText, 1800, 35);
                 const totalChunks = textChunks.length;
 
                 let mergedAudioBuffer: AudioBuffer | null = null;
