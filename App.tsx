@@ -671,6 +671,15 @@ export function App() {
                         console.log(`[Chunk Loop] Starting chunk ${i + 1}/${totalChunks}...`);
                         setLoadingStatus(`오디오 생성 중 (${i + 1}/${totalChunks})...`);
 
+                        // Extract prev text context
+                        let previousText = undefined;
+                        if (i > 0) {
+                            const prevLines = textChunks[i - 1].split('\n').filter(l => l.trim().length > 0);
+                            // Take up to last 3 lines
+                            previousText = prevLines.slice(-3).join('\n');
+                        }
+
+                        const ttsKeys = ttsApiKeys.filter(item => item.key.trim() !== '').map(item => item.key);
                         // Step 2: Generate Audio for this chunk
                         const base64Pcm = await generateSingleSpeakerAudio(
                             chunkText,
@@ -680,7 +689,9 @@ export function App() {
                             toneLevel,
                             stylePrompt,
                             abortControllerRef.current.signal,
-                            { chunkIndex: i, totalChunks: totalChunks }
+                            { chunkIndex: i, totalChunks: totalChunks, previousText },
+                            ttsKeys,
+                            userApiKey
                         );
 
                         setLoadingStatus(`오디오 처리 중 (${i + 1}/${totalChunks})...`);
@@ -1229,13 +1240,18 @@ export function App() {
         setError(null);
 
         try {
+            const ttsKeys = ttsApiKeys.filter(item => item.key.trim() !== '').map(item => item.key);
             const audioData = await generateSingleSpeakerAudio(
                 sampleText,
                 singleSpeakerVoice,
                 selectedModel,
                 speechSpeed,
                 toneLevel,
-                stylePrompt
+                stylePrompt,
+                undefined,
+                undefined,
+                ttsKeys,
+                userApiKey
             );
 
             const wavBlob = createWavBlobFromBase64Pcm(audioData);
@@ -1283,6 +1299,15 @@ export function App() {
         abortControllerRef.current = new AbortController();
 
         try {
+            // Extract prev text context for regeneration
+            let previousText = undefined;
+            if (chunkIndex > 0) {
+                const prevChunk = targetItem.audioChunks[chunkIndex - 1];
+                const prevLines = prevChunk.text.split('\n').filter(l => l.trim().length > 0);
+                previousText = prevLines.slice(-3).join('\n');
+            }
+
+            const ttsKeys = ttsApiKeys.filter(item => item.key.trim() !== '').map(item => item.key);
             const base64Pcm = await generateSingleSpeakerAudio(
                 chunk.text,
                 singleSpeakerVoice,
@@ -1290,7 +1315,10 @@ export function App() {
                 speechSpeed,
                 toneLevel,
                 stylePrompt,
-                abortControllerRef.current.signal
+                abortControllerRef.current.signal,
+                { chunkIndex, totalChunks: targetItem.audioChunks.length, previousText },
+                ttsKeys,
+                userApiKey
             );
 
             const audioContext = new AudioContext();
@@ -1827,14 +1855,21 @@ export function App() {
                                     <label htmlFor="api-key-input" className="block text-sm font-medium text-gray-300">
                                         기본 API 키 (대본 분석/자막 생성용)
                                     </label>
-                                    <input
-                                        id="api-key-input"
-                                        type="password"
-                                        value={userApiKey}
-                                        onChange={(e) => setUserApiKey(e.target.value)}
-                                        placeholder="AIza..."
-                                        className="w-full bg-gray-700 border border-gray-600 rounded-md p-2 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                                    />
+                                    <div className="relative">
+                                        <input
+                                            id="api-key-input"
+                                            type="password"
+                                            value={userApiKey}
+                                            onChange={(e) => setUserApiKey(e.target.value)}
+                                            placeholder="AIza..."
+                                            className="w-full bg-gray-700 border border-gray-600 rounded-md p-2 pr-12 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                        />
+                                        {userApiKey.length > 4 && (
+                                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-400 font-mono pointer-events-none">
+                                                ...{userApiKey.slice(-4)}
+                                            </span>
+                                        )}
+                                    </div>
                                 </div>
 
                                 {/* TTS 전용 API 키 리스트 */}
@@ -1869,13 +1904,20 @@ export function App() {
                                                     </span>
 
                                                     {/* API 키 입력 */}
-                                                    <input
-                                                        type="password"
-                                                        value={item.key}
-                                                        onChange={(e) => handleUpdateTtsKey(item.id, e.target.value)}
-                                                        placeholder={`TTS API 키 ${index + 1}`}
-                                                        className="flex-grow bg-gray-700 border border-gray-600 rounded-md p-2 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
-                                                    />
+                                                    <div className="relative flex-grow">
+                                                        <input
+                                                            type="password"
+                                                            value={item.key}
+                                                            onChange={(e) => handleUpdateTtsKey(item.id, e.target.value)}
+                                                            placeholder={`TTS API 키 ${index + 1}`}
+                                                            className="w-full bg-gray-700 border border-gray-600 rounded-md p-2 pr-14 text-white text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                                                        />
+                                                        {item.key.length > 4 && (
+                                                            <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-gray-400 font-mono pointer-events-none">
+                                                                ...{item.key.slice(-4)}
+                                                            </span>
+                                                        )}
+                                                    </div>
 
                                                     {/* 위/아래 이동 버튼 */}
                                                     <button

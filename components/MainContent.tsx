@@ -1225,6 +1225,7 @@ export const MainContent: React.FC<MainContentProps> = ({
                                         <span className="text-sm font-medium">Pro TTS</span>
                                         <span className="text-[10px] bg-yellow-900/50 text-yellow-300 px-1.5 py-0.5 rounded border border-yellow-700">고품질</span>
                                     </label>
+                                    {/* Native Audio option disabled/hidden for now
                                     <label className="flex-1 min-w-[120px] flex items-center justify-center gap-2 p-2.5 rounded-md border bg-gray-700/30 border-gray-600/50 text-gray-500 cursor-not-allowed opacity-50"
                                         title="현재 사용 불가"
                                     >
@@ -1238,6 +1239,7 @@ export const MainContent: React.FC<MainContentProps> = ({
                                         <span className="text-sm font-medium">Native Audio</span>
                                         <span className="text-[10px] bg-gray-700/50 text-gray-500 px-1.5 py-0.5 rounded border border-gray-600">(비활성)</span>
                                     </label>
+                                    */}
                                 </div>
                             </div>
 
@@ -1575,7 +1577,7 @@ export const MainContent: React.FC<MainContentProps> = ({
                         )}
 
                         {isLoading ? (
-                            <div className="flex-grow bg-gray-800 rounded-lg shadow-inner flex flex-col items-center justify-center border border-gray-700/50">
+                            <div className="flex-grow bg-gray-800 rounded-lg shadow-inner flex flex-col items-center justify-start pt-24 border border-gray-700/50">
                                 <div className="relative w-24 h-24 mb-8">
                                     <div className="absolute top-0 left-0 w-full h-full border-4 border-indigo-500/30 rounded-full"></div>
                                     <div className="absolute top-0 left-0 w-full h-full border-4 border-indigo-500 border-t-transparent rounded-full animate-spin"></div>

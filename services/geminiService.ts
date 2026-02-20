@@ -19,12 +19,12 @@ export const setApiKey = (apiKey: string) => {
 
 // Rate Limit 에러 감지 함수
 function isRateLimitError(error: any): boolean {
-  const message = error?.message || '';
+  const message = error?.message?.toLowerCase() || '';
   return (
     message.includes('429') ||
-    message.includes('RESOURCE_EXHAUSTED') ||
+    message.includes('resource_exhausted') ||
     message.includes('quota') ||
-    message.includes('Rate limit')
+    message.includes('rate limit')
   );
 }
 
@@ -145,6 +145,7 @@ const TONE_LEVEL_MAP: Record<number, { ko: string; en: string }> = {
 interface ChunkInfo {
     chunkIndex: number;
     totalChunks: number;
+    previousText?: string;
 }
 
 /**
@@ -374,17 +375,21 @@ function buildTtsPrompt(
 
     if (chunkInfo && chunkInfo.chunkIndex > 0) {
         systemInstructions.push(isKorean
-            ? '이전과 동일한 톤 유지. 시작 에너지 높이지 말 것.'
-            : 'Maintain same tone. Do not raise energy at start.'
+            ? '[중요: 연속된 오디오의 중간 부분입니다]\n- 앞서 읽던 목소리(화자), 톤, 감정선을 100% 동일하게 유지하세요.\n- 새로운 문단이 시작되는 것처럼 에너지를 높이거나 인사이드 톤(라디오 오프닝 느낌)으로 리셋하지 마세요.\n- 바로 이전 문장과 끊김 없이 이어지는 것처럼 자연스럽고 차분하게 시작하세요.\n- 목소리가 바뀌거나 연기 톤이 달라지면 안 됩니다.'
+            : '[IMPORTANT: This is a continuation of a longer narration]\n- Maintain 100% the exact same voice, tone, and emotional line as the previous segment.\n- DO NOT start with high energy or a "new opening" radio voice as if starting fresh.\n- Begin naturally and calmly, as if continuing directly from the previous sentence.\n- The voice character and acting tone MUST NOT change or reset.'
         );
     }
+
+    const previousContext = chunkInfo?.previousText
+        ? `[이전 문맥 (참고용, 읽지 말 것)]\n${chunkInfo.previousText}\n\n`
+        : '';
 
     const userPromptSection = stylePrompt?.trim() ? `${stylePrompt.trim()}\n\n` : '';
 
     return `${userPromptSection}[System]
 ${systemInstructions.join('\n')}
 
-[Transcript]
+${previousContext}[Transcript]
 ${text}`;
 }
 
@@ -539,7 +544,7 @@ async function _generateAudio(
   }
 }
 
-export const generateSingleSpeakerAudio = (
+export const generateSingleSpeakerAudio = async (
   prompt: string,
   voiceName: string,
   modelName: string,
@@ -547,7 +552,9 @@ export const generateSingleSpeakerAudio = (
   toneLevel: number = 3,
   stylePrompt?: string,
   signal?: AbortSignal,
-  chunkInfo?: ChunkInfo
+  chunkInfo?: ChunkInfo,
+  ttsApiKeys: string[] = [],
+  fallbackApiKey: string = ''
 ): Promise<string> => {
   const speechConfig: SpeechConfig = {
     voiceConfig: {
@@ -557,7 +564,60 @@ export const generateSingleSpeakerAudio = (
     },
     languageCode: 'ko-KR',
   };
-  return _generateAudio(prompt, modelName, speechConfig, speed, toneLevel, stylePrompt, signal, chunkInfo);
+
+  const validTtsKeys = ttsApiKeys.filter(k => k.trim() !== '');
+  const keysToTry = validTtsKeys.length > 0 && fallbackApiKey
+    ? [...validTtsKeys, fallbackApiKey]
+    : fallbackApiKey ? [fallbackApiKey] : validTtsKeys;
+
+  if (keysToTry.length === 0) {
+      // API 키 목록이 전달되지 않은 경우 (기존 호환성)
+      return _generateAudio(prompt, modelName, speechConfig, speed, toneLevel, stylePrompt, signal, chunkInfo);
+  }
+
+  let lastError: Error | null = null;
+  const originalApiKey = fallbackApiKey || keysToTry[0];
+
+  for (let i = 0; i < keysToTry.length; i++) {
+    const currentKey = keysToTry[i];
+    const originalIndex = ttsApiKeys.indexOf(currentKey) + 1; // Find the index from the unfiltered array for logging
+    const keyType = originalIndex > 0 ? `TTS 전용 #${originalIndex}` : '기본';
+
+    try {
+      if (keysToTry.length > 1) {
+          console.log(`[Single TTS Fallback] ${keyType} API 키 시도 중... (${i + 1}/${keysToTry.length})`);
+      }
+      
+      setApiKey(currentKey);
+      const result = await _generateAudio(prompt, modelName, speechConfig, speed, toneLevel, stylePrompt, signal, chunkInfo);
+
+      if (keysToTry.length > 1) {
+          console.log(`[Single TTS Fallback] ✅ ${keyType} API 키로 성공!`);
+      }
+      setApiKey(originalApiKey);
+      return result;
+
+    } catch (error: any) {
+      if (keysToTry.length > 1) {
+          console.warn(`[Single TTS Fallback] ❌ ${keyType} API 키 실패:`, error.message);
+      }
+      lastError = error;
+
+      if (!isRateLimitError(error)) {
+        if (keysToTry.length > 1) console.error(`[Single TTS Fallback] Rate Limit이 아닌 에러 발생, 중단:`, error.message);
+        setApiKey(originalApiKey);
+        throw error;
+      }
+
+      if (i < keysToTry.length - 1) {
+        if (keysToTry.length > 1) console.log(`[Single TTS Fallback] 🔄 Rate Limit 감지, 다음 API 키로 전환...`);
+        continue;
+      }
+    }
+  }
+
+  setApiKey(originalApiKey);
+  throw new Error(`모든 API 키의 할당량이 초과되었습니다 (${keysToTry.length}개 시도). 마지막 에러: ${lastError?.message || '알 수 없음'}`);
 };
 
 export const previewVoice = (
