@@ -1,31 +1,30 @@
+import { GoogleGenAI, Modality } from '@google/genai'
 
-import { GoogleGenAI, Modality } from "@google/genai";
-
-let generalAI: GoogleGenAI | null = null;
-let liveAI: GoogleGenAI | null = null;
+let generalAI: GoogleGenAI | null = null
+let liveAI: GoogleGenAI | null = null
 
 export const setApiKey = (apiKey: string) => {
-  if (!apiKey) return;
+  if (!apiKey) return
   try {
-    generalAI = new GoogleGenAI({ apiKey }); // Uses default v1beta
+    generalAI = new GoogleGenAI({ apiKey }) // Uses default v1beta
     liveAI = new GoogleGenAI({
       apiKey,
-      httpOptions: { apiVersion: 'v1alpha' }
-    });
+      httpOptions: { apiVersion: 'v1alpha' },
+    })
   } catch (e) {
-    console.error("Failed to set API Key:", e);
+    console.error('Failed to set API Key:', e)
   }
-};
+}
 
 // Rate Limit 에러 감지 함수
 function isRateLimitError(error: any): boolean {
-  const message = error?.message?.toLowerCase() || '';
+  const message = error?.message?.toLowerCase() || ''
   return (
     message.includes('429') ||
     message.includes('resource_exhausted') ||
     message.includes('quota') ||
     message.includes('rate limit')
-  );
+  )
 }
 
 // TTS 생성용 Fallback 시스템
@@ -35,32 +34,33 @@ export async function generateAudioWithFallback(
   stylePrompt: string,
   speed: number,
   silenceBetweenLinesMs: number,
-  ttsApiKeys: string[],  // TTS 전용 API 키 배열
-  fallbackApiKey: string,  // 기본 API 키 (최종 fallback)
+  ttsApiKeys: string[], // TTS 전용 API 키 배열
+  fallbackApiKey: string, // 기본 API 키 (최종 fallback)
   signal?: AbortSignal
 ): Promise<{
-  audioBuffer: ArrayBuffer;
-  lineTimings: { start: number; end: number }[];
-  paragraphs: string[];
+  audioBuffer: ArrayBuffer
+  lineTimings: { start: number; end: number }[]
+  paragraphs: string[]
 }> {
   // 사용할 API 키 목록 준비
-  const validTtsKeys = ttsApiKeys.filter(k => k.trim() !== '');
-  const keysToTry = validTtsKeys.length > 0
-    ? [...validTtsKeys, fallbackApiKey]  // TTS 키들 먼저, 기본 키는 마지막
-    : [fallbackApiKey];  // TTS 키 없으면 기본 키만
+  const validTtsKeys = ttsApiKeys.filter(k => k.trim() !== '')
+  const keysToTry =
+    validTtsKeys.length > 0
+      ? [...validTtsKeys, fallbackApiKey] // TTS 키들 먼저, 기본 키는 마지막
+      : [fallbackApiKey] // TTS 키 없으면 기본 키만
 
-  let lastError: Error | null = null;
-  const originalApiKey = fallbackApiKey;  // 기본 키 백업
+  let lastError: Error | null = null
+  const originalApiKey = fallbackApiKey // 기본 키 백업
 
   for (let i = 0; i < keysToTry.length; i++) {
-    const currentKey = keysToTry[i];
-    const keyType = i < validTtsKeys.length ? 'TTS 전용' : '기본';
+    const currentKey = keysToTry[i]
+    const keyType = i < validTtsKeys.length ? 'TTS 전용' : '기본'
 
     try {
-      console.log(`[TTS Fallback] ${keyType} API 키 ${i + 1}/${keysToTry.length} 시도 중...`);
+      console.log(`[TTS Fallback] ${keyType} API 키 ${i + 1}/${keysToTry.length} 시도 중...`)
 
       // 현재 키로 API 설정
-      setApiKey(currentKey);
+      setApiKey(currentKey)
 
       // TTS 생성 시도
       const result = await generateAudioWithLiveAPIMultiTurn(
@@ -70,82 +70,81 @@ export async function generateAudioWithFallback(
         speed,
         silenceBetweenLinesMs,
         signal
-      );
+      )
 
-      console.log(`[TTS Fallback] ✅ ${keyType} API 키로 성공!`);
+      console.log(`[TTS Fallback] ✅ ${keyType} API 키로 성공!`)
 
       // 성공 후 기본 키로 복원 (대본 분석용)
-      setApiKey(originalApiKey);
+      setApiKey(originalApiKey)
 
-      return result;
-
+      return result
     } catch (error: any) {
-      console.warn(`[TTS Fallback] ❌ ${keyType} API 키 ${i + 1} 실패:`, error.message);
+      console.warn(`[TTS Fallback] ❌ ${keyType} API 키 ${i + 1} 실패:`, error.message)
 
-      lastError = error;
+      lastError = error
 
       // Rate Limit 에러가 아니면 즉시 종료
       if (!isRateLimitError(error)) {
-        console.error(`[TTS Fallback] Rate Limit이 아닌 에러 발생, 중단:`, error.message);
+        console.error(`[TTS Fallback] Rate Limit이 아닌 에러 발생, 중단:`, error.message)
         // 기본 키로 복원
-        setApiKey(originalApiKey);
-        throw error;
+        setApiKey(originalApiKey)
+        throw error
       }
 
       // Rate Limit 에러이고 다음 키가 있으면 계속 시도
       if (i < keysToTry.length - 1) {
-        console.log(`[TTS Fallback] 🔄 Rate Limit 감지, 다음 API 키로 전환...`);
-        continue;
+        console.log(`[TTS Fallback] 🔄 Rate Limit 감지, 다음 API 키로 전환...`)
+        continue
       }
     }
   }
 
   // 모든 키 실패 - 기본 키로 복원
-  setApiKey(originalApiKey);
+  setApiKey(originalApiKey)
 
   throw new Error(
     `모든 API 키의 할당량이 초과되었습니다 (${keysToTry.length}개 시도). ` +
-    `마지막 에러: ${lastError?.message || '알 수 없음'}`
-  );
+      `마지막 에러: ${lastError?.message || '알 수 없음'}`
+  )
 }
 
 // Initialize Logic: Prioritize LocalStorage (User entered), then Env (Build time)
-const storedKey = typeof localStorage !== 'undefined' ? localStorage.getItem('gemini_api_key') : null;
+const storedKey =
+  typeof localStorage !== 'undefined' ? localStorage.getItem('gemini_api_key') : null
 
 if (storedKey) {
-  setApiKey(storedKey);
+  setApiKey(storedKey)
 } else if (process.env.API_KEY) {
-  setApiKey(process.env.API_KEY);
+  setApiKey(process.env.API_KEY)
 }
 
-
 const TONE_LEVEL_MAP: Record<number, { ko: string; en: string }> = {
-    1: {
-        ko: '매우 차분하고 낮은 톤으로 읽으세요.',
-        en: 'Read in a very calm and low tone.'
-    },
-    2: {
-        ko: '차분하고 편안한 톤으로 읽으세요.',
-        en: 'Read in a calm and relaxed tone.'
-    },
-    3: {
-        ko: '자연스럽고 중립적인 톤으로 읽으세요.',
-        en: 'Read in a natural and neutral tone.'
-    },
-    4: {
-        ko: '밝고 활기찬 톤으로 읽으세요.',
-        en: 'Read in a bright and lively tone.'
-    },
-    5: {
-        ko: '매우 밝고 열정적인 톤으로 읽으세요.',
-        en: 'Read in a very bright and enthusiastic tone.'
-    }
-};
+  1: {
+    ko: '매우 차분하고 낮은 톤으로 읽으세요.',
+    en: 'Read in a very calm and low tone.',
+  },
+  2: {
+    ko: '차분하고 편안한 톤으로 읽으세요.',
+    en: 'Read in a calm and relaxed tone.',
+  },
+  3: {
+    ko: '자연스럽고 중립적인 톤으로 읽으세요.',
+    en: 'Read in a natural and neutral tone.',
+  },
+  4: {
+    ko: '밝고 활기찬 톤으로 읽으세요.',
+    en: 'Read in a bright and lively tone.',
+  },
+  5: {
+    ko: '매우 밝고 열정적인 톤으로 읽으세요.',
+    en: 'Read in a very bright and enthusiastic tone.',
+  },
+}
 
 interface ChunkInfo {
-    chunkIndex: number;
-    totalChunks: number;
-    previousText?: string;
+  chunkIndex: number
+  totalChunks: number
+  previousText?: string
 }
 
 /**
@@ -153,19 +152,19 @@ interface ChunkInfo {
  */
 function getPacingPrompt(speed: number): string {
   if (speed <= 0.5) {
-    return 'Pacing: Extremely slow, almost meditative. Long pauses between phrases. Each word deliberate and weighted.';
+    return 'Pacing: Extremely slow, almost meditative. Long pauses between phrases. Each word deliberate and weighted.'
   } else if (speed <= 0.7) {
-    return 'Pacing: Slow and relaxed. Take your time, let the words breathe. About 2 words per second.';
+    return 'Pacing: Slow and relaxed. Take your time, let the words breathe. About 2 words per second.'
   } else if (speed <= 0.9) {
-    return 'Pacing: Unhurried and gentle. Speak deliberately, no rushing. About 3 words per second.';
+    return 'Pacing: Unhurried and gentle. Speak deliberately, no rushing. About 3 words per second.'
   } else if (speed <= 1.1) {
-    return 'Pacing: Natural conversational pace.';
+    return 'Pacing: Natural conversational pace.'
   } else if (speed <= 1.3) {
-    return 'Pacing: Slightly energetic pace, keeping momentum without rushing.';
+    return 'Pacing: Slightly energetic pace, keeping momentum without rushing.'
   } else if (speed <= 1.6) {
-    return 'Pacing: Quick and lively delivery, but still clear and articulate.';
+    return 'Pacing: Quick and lively delivery, but still clear and articulate.'
   } else {
-    return 'Pacing: Rapid-fire delivery. Speak as fast as possible while maintaining clarity.';
+    return 'Pacing: Rapid-fire delivery. Speak as fast as possible while maintaining clarity.'
   }
 }
 
@@ -174,148 +173,151 @@ function getPacingPrompt(speed: number): string {
  */
 export function getTonePrompt(toneLevel: number): string {
   if (toneLevel <= 1) {
-    return 'Tone: Very low and hushed, almost a whisper. Pitch around 140-180Hz. Minimal energy, deeply subdued.';
+    return 'Tone: Very low and hushed, almost a whisper. Pitch around 140-180Hz. Minimal energy, deeply subdued.'
   } else if (toneLevel <= 2) {
-    return 'Tone: Low and soft, like a quiet late-night radio whisper. Pitch around 160-200Hz. Soft and subdued energy.';
+    return 'Tone: Low and soft, like a quiet late-night radio whisper. Pitch around 160-200Hz. Soft and subdued energy.'
   } else if (toneLevel <= 3) {
-    return 'Tone: Warm and gentle, like telling a bedtime story. Pitch around 180-220Hz. Calm, soothing energy.';
+    return 'Tone: Warm and gentle, like telling a bedtime story. Pitch around 180-220Hz. Calm, soothing energy.'
   } else if (toneLevel <= 4) {
-    return 'Tone: Warm and clear, comfortable storytelling. Pitch around 200-240Hz. Gentle but present energy.';
+    return 'Tone: Warm and clear, comfortable storytelling. Pitch around 200-240Hz. Gentle but present energy.'
   } else {
-    return 'Tone: Friendly and inviting, daytime radio feel. Pitch around 220-260Hz. Warm and engaged energy.';
+    return 'Tone: Friendly and inviting, daytime radio feel. Pitch around 220-260Hz. Warm and engaged energy.'
   }
 }
 
 // Models are now dynamic, but we keep this as a fallback/reference or for Flash.
 // Pro model will be passed dynamically.
-const transcriptionModelName = 'gemini-1.5-flash';
-const NATIVE_AUDIO_MODEL = 'gemini-2.5-flash-native-audio-dialog-preview';
+const transcriptionModelName = 'gemini-1.5-flash'
+const NATIVE_AUDIO_MODEL = 'gemini-2.5-flash-native-audio-dialog-preview'
 
 // 감정 전달과 문맥 유지를 위해 한 턴에 처리할 대본 줄 수
-export const LINES_PER_TURN = 4;
+export const LINES_PER_TURN = 4
 
 interface SpeechConfig {
   voiceConfig?: {
     prebuiltVoiceConfig: {
-      voiceName: string;
-    };
-  };
+      voiceName: string
+    }
+  }
   multiSpeakerVoiceConfig?: {
     speakerVoiceConfigs: {
-      speaker: string;
+      speaker: string
       voiceConfig: {
         prebuiltVoiceConfig: {
-          voiceName: string;
-        };
-      };
-    }[];
-  };
-  languageCode?: string;
+          voiceName: string
+        }
+      }
+    }[]
+  }
+  languageCode?: string
 }
 
 /**
  * 전역 에러 핸들러: API 에러 응답을 분석하여 사용자 친화적인 메시지로 변환합니다.
  */
 function handleApiError(error: any): Error {
-  const message = error instanceof Error ? error.message : String(error);
+  const message = error instanceof Error ? error.message : String(error)
 
   // 429 Too Many Requests 또는 Quota 관련 키워드 체크
-  if (message.includes('429') || message.toLowerCase().includes('quota') || message.toLowerCase().includes('limit')) {
-    return new Error("API 요청 한도(Quota)를 초과했습니다. 유료 계정이라도 모델별 일일 생성량이나 분당 요청 제한이 있을 수 있습니다. Google AI 스튜디오의 'Plan & Billing'에서 할당량을 확인하시거나, 잠시(1~5분) 후 다시 시도해 주세요.");
+  if (
+    message.includes('429') ||
+    message.toLowerCase().includes('quota') ||
+    message.toLowerCase().includes('limit')
+  ) {
+    return new Error(
+      "API 요청 한도(Quota)를 초과했습니다. 유료 계정이라도 모델별 일일 생성량이나 분당 요청 제한이 있을 수 있습니다. Google AI 스튜디오의 'Plan & Billing'에서 할당량을 확인하시거나, 잠시(1~5분) 후 다시 시도해 주세요."
+    )
   }
 
   // 401/403 관련 (인증 에러)
   if (message.includes('401') || message.includes('403')) {
-    return new Error("API 키가 유효하지 않거나 권한이 없습니다. 설정을 확인해주세요.");
+    return new Error('API 키가 유효하지 않거나 권한이 없습니다. 설정을 확인해주세요.')
   }
 
   // 500 관련 (서버 에러)
   if (message.includes('500') || message.includes('503')) {
-    return new Error("Google 서버에 일시적인 문제가 발생했습니다. 잠시 후 다시 시도해주세요.");
+    return new Error('Google 서버에 일시적인 문제가 발생했습니다. 잠시 후 다시 시도해주세요.')
   }
 
-  return new Error(`AI와 통신 중 오류가 발생했습니다: ${message}`);
+  return new Error(`AI와 통신 중 오류가 발생했습니다: ${message}`)
 }
 
 /**
  * Uint8Array를 메모리 효율적으로 Base64로 변환합니다. (Stack Overflow 방지)
  */
 export function uint8ArrayToBase64(uint8: Uint8Array): string {
-  let binary = '';
-  const chunkSize = 8192; // 안전한 chunk 크기
+  let binary = ''
+  const chunkSize = 8192 // 안전한 chunk 크기
   for (let i = 0; i < uint8.length; i += chunkSize) {
-    const sub = uint8.subarray(i, i + chunkSize);
-    binary += String.fromCharCode.apply(null, sub as any);
+    const sub = uint8.subarray(i, i + chunkSize)
+    binary += String.fromCharCode.apply(null, sub as any)
   }
-  return btoa(binary);
+  return btoa(binary)
 }
 
 /**
  * Base64 string to ArrayBuffer.
  */
 function base64ToArrayBuffer(base64: string): ArrayBuffer {
-  const binaryString = atob(base64);
-  const bytes = new Uint8Array(binaryString.length);
+  const binaryString = atob(base64)
+  const bytes = new Uint8Array(binaryString.length)
   for (let i = 0; i < binaryString.length; i++) {
-    bytes[i] = binaryString.charCodeAt(i);
+    bytes[i] = binaryString.charCodeAt(i)
   }
-  return bytes.buffer;
+  return bytes.buffer
 }
 
 /**
  * Merge multiple ArrayBuffers.
  */
 function mergeArrayBuffers(buffers: ArrayBuffer[]): ArrayBuffer {
-  const totalLength = buffers.reduce((acc, buf) => acc + buf.byteLength, 0);
-  const result = new Uint8Array(totalLength);
-  let offset = 0;
+  const totalLength = buffers.reduce((acc, buf) => acc + buf.byteLength, 0)
+  const result = new Uint8Array(totalLength)
+  let offset = 0
   for (const buf of buffers) {
-    result.set(new Uint8Array(buf), offset);
-    offset += buf.byteLength;
+    result.set(new Uint8Array(buf), offset)
+    offset += buf.byteLength
   }
-  return result.buffer;
+  return result.buffer
 }
 
 /**
  * 지정된 길이의 무음 PCM 버퍼 생성 (24kHz, 16bit, mono)
  */
 function createSilenceBuffer(durationMs: number): ArrayBuffer {
-  const sampleRate = 24000;
-  const bytesPerSample = 2; // 16bit
-  const numSamples = Math.floor((durationMs / 1000) * sampleRate);
-  const buffer = new ArrayBuffer(numSamples * bytesPerSample);
+  const sampleRate = 24000
+  const bytesPerSample = 2 // 16bit
+  const numSamples = Math.floor((durationMs / 1000) * sampleRate)
+  const buffer = new ArrayBuffer(numSamples * bytesPerSample)
   // ArrayBuffer는 기본적으로 0으로 초기화됨 = 무음
-  return buffer;
+  return buffer
 }
 
 /**
  * 오디오 청크들을 무음 간격과 함께 병합
  */
-function mergeAudioWithSilence(
-  audioChunks: ArrayBuffer[],
-  silenceMs: number = 500
-): ArrayBuffer {
-  const silence = createSilenceBuffer(silenceMs);
-  const allBuffers: ArrayBuffer[] = [];
+function mergeAudioWithSilence(audioChunks: ArrayBuffer[], silenceMs: number = 500): ArrayBuffer {
+  const silence = createSilenceBuffer(silenceMs)
+  const allBuffers: ArrayBuffer[] = []
 
   for (let i = 0; i < audioChunks.length; i++) {
-    allBuffers.push(audioChunks[i]);
+    allBuffers.push(audioChunks[i])
 
     // 마지막 줄이 아니면 무음 추가
     if (i < audioChunks.length - 1) {
-      allBuffers.push(silence);
+      allBuffers.push(silence)
     }
   }
 
   // 전체 병합
-  const totalLength = allBuffers.reduce((acc, buf) => acc + buf.byteLength, 0);
-  const result = new Uint8Array(totalLength);
-  let offset = 0;
+  const totalLength = allBuffers.reduce((acc, buf) => acc + buf.byteLength, 0)
+  const result = new Uint8Array(totalLength)
+  let offset = 0
   for (const buf of allBuffers) {
-    result.set(new Uint8Array(buf), offset);
-    offset += buf.byteLength;
+    result.set(new Uint8Array(buf), offset)
+    offset += buf.byteLength
   }
-  return result.buffer;
+  return result.buffer
 }
 
 /**
@@ -326,71 +328,69 @@ export function generateSrtFromParagraphTimings(
   paragraphs: string[],
   lineTimings: Array<{ start: number; end: number }>
 ): string {
-  const srtBlocks: string[] = [];
+  const srtBlocks: string[] = []
 
   for (let i = 0; i < paragraphs.length; i++) {
-    const text = paragraphs[i].trim();
-    if (!text) continue;
+    const text = paragraphs[i].trim()
+    if (!text) continue
 
-    const timing = lineTimings[i];
-    if (!timing) continue;
+    const timing = lineTimings[i]
+    if (!timing) continue
 
-    const startTime = msToSrtTime(timing.start);
-    const endTime = msToSrtTime(timing.end);
+    const startTime = msToSrtTime(timing.start)
+    const endTime = msToSrtTime(timing.end)
 
-    srtBlocks.push(`${srtBlocks.length + 1}\n${startTime} --> ${endTime}\n${text}\n`);
+    srtBlocks.push(`${srtBlocks.length + 1}\n${startTime} --> ${endTime}\n${text}\n`)
   }
 
-  return srtBlocks.join('\n');
+  return srtBlocks.join('\n')
 }
 
 export function msToSrtTime(ms: number): string {
-  const hours = Math.floor(ms / 3600000);
-  const minutes = Math.floor((ms % 3600000) / 60000);
-  const seconds = Math.floor((ms % 60000) / 1000);
-  const milliseconds = Math.floor(ms % 1000);
+  const hours = Math.floor(ms / 3600000)
+  const minutes = Math.floor((ms % 3600000) / 60000)
+  const seconds = Math.floor((ms % 60000) / 1000)
+  const milliseconds = Math.floor(ms % 1000)
 
-  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')},${String(milliseconds).padStart(3, '0')}`;
+  return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')},${String(milliseconds).padStart(3, '0')}`
 }
 
 function buildTtsPrompt(
-    text: string,
-    stylePrompt: string | undefined,
-    speed: number,
-    toneLevel: number,
-    isKorean: boolean,
-    chunkInfo?: ChunkInfo
+  text: string,
+  stylePrompt: string | undefined,
+  speed: number,
+  toneLevel: number,
+  isKorean: boolean,
+  chunkInfo?: ChunkInfo
 ): string {
-    const systemInstructions: string[] = [];
+  const systemInstructions: string[] = []
 
-    const tone = TONE_LEVEL_MAP[toneLevel] || TONE_LEVEL_MAP[3];
-    systemInstructions.push(isKorean ? tone.ko : tone.en);
+  const tone = TONE_LEVEL_MAP[toneLevel] || TONE_LEVEL_MAP[3]
+  systemInstructions.push(isKorean ? tone.ko : tone.en)
 
-    if (speed !== 1.0) {
-        systemInstructions.push(isKorean
-            ? `속도: ${speed}x`
-            : `Speed: ${speed}x`
-        );
-    }
+  if (speed !== 1.0) {
+    systemInstructions.push(isKorean ? `속도: ${speed}x` : `Speed: ${speed}x`)
+  }
 
-    if (chunkInfo && chunkInfo.chunkIndex > 0) {
-        systemInstructions.push(isKorean
-            ? '[중요: 연속된 오디오의 중간 부분입니다]\n- 앞서 읽던 목소리(화자), 톤, 감정선을 100% 동일하게 유지하세요.\n- 새로운 문단이 시작되는 것처럼 에너지를 높이거나 인사이드 톤(라디오 오프닝 느낌)으로 리셋하지 마세요.\n- 바로 이전 문장과 끊김 없이 이어지는 것처럼 자연스럽고 차분하게 시작하세요.\n- 목소리가 바뀌거나 연기 톤이 달라지면 안 됩니다.'
-            : '[IMPORTANT: This is a continuation of a longer narration]\n- Maintain 100% the exact same voice, tone, and emotional line as the previous segment.\n- DO NOT start with high energy or a "new opening" radio voice as if starting fresh.\n- Begin naturally and calmly, as if continuing directly from the previous sentence.\n- The voice character and acting tone MUST NOT change or reset.'
-        );
-    }
+  if (chunkInfo && chunkInfo.chunkIndex > 0) {
+    systemInstructions.push(
+      isKorean
+        ? '[중요: 긴 오디오 트랙의 중간 청크(분할본)입니다]\n- 앞서 읽던 화자의 목소리 톤, 피치(Pitch), 그리고 감정선을 100% 동일하게 유지하세요.\n- 새로운 문단이 시작되는 것처럼 에너지를 높이거나 라디오 오프닝 느낌으로 리셋하지 마세요.\n- 이전 문장의 끝에서부터 끊김 없이 이어지는 것처럼 자연스럽고 차분하게 시작하세요.\n- 목소리의 배음(Overtone)이 튀거나 치찰음(쇳소리)이 섞이지 않도록 발성에 주의하세요.'
+        : '[IMPORTANT: This is a continuation of a longer audio track]\n- Maintain 100% the exact same voice pitch, tone, and emotional line as the previous segment.\n- DO NOT start with high energy or a "new opening" voice as if starting fresh.\n- Begin naturally and smoothly, as if continuing directly from the previous sentence.\n- Ensure there are no high-frequency artifacts or sudden changes in resonance.'
+    )
+  }
 
-    const previousContext = chunkInfo?.previousText
-        ? `[이전 문맥 (참고용, 읽지 말 것)]\n${chunkInfo.previousText}\n\n`
-        : '';
+  const previousContext = chunkInfo?.previousText
+    ? `[이전 문맥 (참고용, 읽지 말 것)]\n${chunkInfo.previousText}\n\n`
+    : ''
 
-    const userPromptSection = stylePrompt?.trim() ? `${stylePrompt.trim()}\n\n` : '';
+  const userPromptSection = stylePrompt?.trim() ? `${stylePrompt.trim()}\n\n` : ''
 
-    return `${userPromptSection}[System]
+  return `${userPromptSection}[System]
 ${systemInstructions.join('\n')}
 
 ${previousContext}[Transcript]
-${text}`;
+${text}`
 }
 
 async function _generateAudio(
@@ -404,65 +404,64 @@ async function _generateAudio(
   chunkInfo?: ChunkInfo
 ): Promise<string> {
   if (!generalAI || !liveAI) {
-    throw new Error("API 키가 설정되지 않았습니다. 우측 상단 설정 아이콘을 눌러 API 키를 입력해주세요.");
+    throw new Error(
+      'API 키가 설정되지 않았습니다. 우측 상단 설정 아이콘을 눌러 API 키를 입력해주세요.'
+    )
   }
 
   // Pre-process text to avoid premature termination by ellipses in Live API
-  const processedPrompt = prompt
-    .replace(/\.\.\./g, ', ')
-    .replace(/…/g, ', ');
+  const processedPrompt = prompt.replace(/\.\.\./g, ', ').replace(/…/g, ', ')
 
   try {
-    const isNativeAudio = modelName.includes('native-audio-dialog');
+    const isNativeAudio = modelName.includes('native-audio-dialog')
 
     const config: {
-      responseModalities: Modality[];
-      speechConfig?: SpeechConfig;
+      responseModalities: Modality[]
+      speechConfig?: SpeechConfig
     } = {
       responseModalities: [Modality.AUDIO],
-      // Native Audio model doesn't use the standard speechConfig object in some versions, 
+      // Native Audio model doesn't use the standard speechConfig object in some versions,
       // but we pass it as a hint.
       speechConfig: isNativeAudio ? undefined : speechConfig,
-    };
-
-    // Construct the prompt with instructions for steerability
-    const isKorean = /[가-힣]/.test(prompt);
-
-    const finalPrompt = buildTtsPrompt(
-        processedPrompt,
-        stylePrompt,
-        speed,
-        toneLevel,
-        isKorean,
-        chunkInfo
-    );
-
-    if (!generalAI || !liveAI) {
-      throw new Error("API 키가 설정되지 않았습니다.");
     }
 
+    // Construct the prompt with instructions for steerability
+    const isKorean = /[가-힣]/.test(prompt)
+
+    const finalPrompt = buildTtsPrompt(
+      processedPrompt,
+      stylePrompt,
+      speed,
+      toneLevel,
+      isKorean,
+      chunkInfo
+    )
+
+    if (!generalAI || !liveAI) {
+      throw new Error('API 키가 설정되지 않았습니다.')
+    }
 
     // --- CASE 1: Multimodal Live API (WebSocket) for Native Audio Dialog ---
     if (isNativeAudio) {
-      console.log(`[Gemini Live API] Delegating to Multi-Turn generator...`);
-      const lines = processedPrompt.split('\n').filter(l => l.trim().length > 0);
-      const voiceInfo = speechConfig.voiceConfig?.prebuiltVoiceConfig.voiceName || 'Kore';
+      console.log(`[Gemini Live API] Delegating to Multi-Turn generator...`)
+      const lines = processedPrompt.split('\n').filter(l => l.trim().length > 0)
+      const voiceInfo = speechConfig.voiceConfig?.prebuiltVoiceConfig.voiceName || 'Kore'
 
       const result = await generateAudioWithLiveAPIMultiTurn(
         lines,
         voiceInfo,
-        stylePrompt || "Professional Korean Voice Narrator",
+        stylePrompt || 'Professional Korean Voice Narrator',
         speed,
         500, // Default 500ms silence
         signal
-      );
+      )
 
-      return uint8ArrayToBase64(new Uint8Array(result.audioBuffer));
+      return uint8ArrayToBase64(new Uint8Array(result.audioBuffer))
     }
 
     // --- CASE 2: Standard REST API (generateContent) for Flash/Pro TTS ---
     // Use unified SDK style: generalAI.models.generateContent
-    console.log(`[Gemini API Request] Model: ${modelName}, Prompt Length: ${finalPrompt.length}`);
+    console.log(`[Gemini API Request] Model: ${modelName}, Prompt Length: ${finalPrompt.length}`)
 
     const result = await (generalAI as any).models.generateContent({
       model: modelName,
@@ -472,7 +471,7 @@ async function _generateAudio(
         speechConfig: isNativeAudio ? undefined : speechConfig,
         generationConfig: {
           temperature: 0.2, // Balance between voice consistency and emotional richness
-        }
+        },
       },
       safetySettings: [
         { category: 'HARM_CATEGORY_HARASSMENT' as any, threshold: 'BLOCK_NONE' as any },
@@ -480,67 +479,91 @@ async function _generateAudio(
         { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT' as any, threshold: 'BLOCK_NONE' as any },
         { category: 'HARM_CATEGORY_DANGEROUS_CONTENT' as any, threshold: 'BLOCK_NONE' as any },
         { category: 'HARM_CATEGORY_CIVIC_INTEGRITY' as any, threshold: 'BLOCK_NONE' as any },
-      ]
-    });
+      ],
+    })
 
-    const response = result; // result inside (generalAI as any).models.generateContent is the parsed response directly
+    const response = result // result inside (generalAI as any).models.generateContent is the parsed response directly
 
     try {
-      console.log("[Gemini API Response] candidates:", response.candidates?.length, "finishReason:", response.candidates?.[0]?.finishReason);
+      console.log(
+        '[Gemini API Response] candidates:',
+        response.candidates?.length,
+        'finishReason:',
+        response.candidates?.[0]?.finishReason
+      )
     } catch (logErr) {
-      console.log("[Gemini API Response] (로그 직렬화 실패, 응답 객체 순환 참조 가능)");
+      console.log('[Gemini API Response] (로그 직렬화 실패, 응답 객체 순환 참조 가능)')
     }
 
-    const candidate = response.candidates?.[0];
+    const candidate = response.candidates?.[0]
 
     // Check finishReason
-    if (candidate?.finishReason && candidate.finishReason !== 'STOP' && candidate.finishReason !== 'MAX_TOKENS') {
-      console.warn(`[Gemini TTS] Unusual finishReason: ${candidate.finishReason}. Audio might be truncated.`);
+    if (
+      candidate?.finishReason &&
+      candidate.finishReason !== 'STOP' &&
+      candidate.finishReason !== 'MAX_TOKENS'
+    ) {
+      console.warn(
+        `[Gemini TTS] Unusual finishReason: ${candidate.finishReason}. Audio might be truncated.`
+      )
     }
 
-    const audioPart = candidate?.content?.parts.find((part: any) => part.inlineData);
-    const data = audioPart?.inlineData?.data;
+    const audioPart = candidate?.content?.parts.find((part: any) => part.inlineData)
+    const data = audioPart?.inlineData?.data
 
     if (!data) {
-      console.error("API response missing audio. Full candidate:", JSON.stringify(candidate, null, 2));
+      console.error(
+        'API response missing audio. Full candidate:',
+        JSON.stringify(candidate, null, 2)
+      )
 
       if (candidate?.finishReason === 'SAFETY') {
-        throw new Error(`안전 필터에 의해 차단되었습니다. (FinishReason: SAFETY). 문제가 된 텍스트 일부: "${prompt.substring(0, 100)}..."`);
+        throw new Error(
+          `안전 필터에 의해 차단되었습니다. (FinishReason: SAFETY). 문제가 된 텍스트 일부: "${prompt.substring(0, 100)}..."`
+        )
       }
       if (candidate?.finishReason === 'PROHIBITED_CONTENT') {
-        const blockPreview = prompt.length > 500 ? prompt.substring(0, 500) + "..." : prompt;
-        console.error("차단된 텍스트 청크 전체:", prompt);
-        throw new Error(`구글 정책에 의해 차단된 콘텐츠입니다. (FinishReason: PROHIBITED_CONTENT). 해당 청크에 포함된 특정 단어나 표현을 수정해 보세요. (차단된 구간 시작: "${blockPreview}")`);
+        const blockPreview = prompt.length > 500 ? prompt.substring(0, 500) + '...' : prompt
+        console.error('차단된 텍스트 청크 전체:', prompt)
+        throw new Error(
+          `구글 정책에 의해 차단된 콘텐츠입니다. (FinishReason: PROHIBITED_CONTENT). 해당 청크에 포함된 특정 단어나 표현을 수정해 보세요. (차단된 구간 시작: "${blockPreview}")`
+        )
       }
       if (candidate?.finishReason === 'RECITATION') {
-        throw new Error(`저작권이 있는 텍스트로 감지되어 차단되었습니다. (FinishReason: RECITATION).`);
+        throw new Error(
+          `저작권이 있는 텍스트로 감지되어 차단되었습니다. (FinishReason: RECITATION).`
+        )
       }
       if (candidate?.finishReason === 'OTHER') {
-        throw new Error(`알 수 없는 이유로 모델이 차단되었습니다. (FinishReason: OTHER).`);
+        throw new Error(`알 수 없는 이유로 모델이 차단되었습니다. (FinishReason: OTHER).`)
       }
 
-      const textPart = candidate?.content?.parts?.[0]?.text;
+      const textPart = candidate?.content?.parts?.[0]?.text
       if (textPart) {
-        console.warn("Model responded with text instead of audio:", textPart);
-        throw new Error(`AI가 오디오 대신 텍스트로 응답했습니다: "${textPart.substring(0, 150)}..."`);
+        console.warn('Model responded with text instead of audio:', textPart)
+        throw new Error(
+          `AI가 오디오 대신 텍스트로 응답했습니다: "${textPart.substring(0, 150)}..."`
+        )
       }
 
       // Check if parts exist but are just empty or weird
-      const parts = candidate?.content?.parts;
+      const parts = candidate?.content?.parts
       if (parts && parts.length > 0) {
-        console.error("Parts found but no inlineData:", JSON.stringify(parts, null, 2));
+        console.error('Parts found but no inlineData:', JSON.stringify(parts, null, 2))
       }
 
-      throw new Error(`오디오 데이터 누락 (FinishReason: ${candidate?.finishReason || 'UNKNOWN'}). API 응답 구조가 평소와 다릅니다. 콘솔 로그를 확인해주세요.`);
+      throw new Error(
+        `오디오 데이터 누락 (FinishReason: ${candidate?.finishReason || 'UNKNOWN'}). API 응답 구조가 평소와 다릅니다. 콘솔 로그를 확인해주세요.`
+      )
     }
 
-    return data;
+    return data
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
-      throw error;
+      throw error
     }
-    console.error("Error generating audio with Gemini API:", error);
-    throw handleApiError(error);
+    console.error('Error generating audio with Gemini API:', error)
+    throw handleApiError(error)
   }
 }
 
@@ -563,62 +586,88 @@ export const generateSingleSpeakerAudio = async (
       },
     },
     languageCode: 'ko-KR',
-  };
-
-  const validTtsKeys = ttsApiKeys.filter(k => k.trim() !== '');
-  const keysToTry = validTtsKeys.length > 0 && fallbackApiKey
-    ? [...validTtsKeys, fallbackApiKey]
-    : fallbackApiKey ? [fallbackApiKey] : validTtsKeys;
-
-  if (keysToTry.length === 0) {
-      // API 키 목록이 전달되지 않은 경우 (기존 호환성)
-      return _generateAudio(prompt, modelName, speechConfig, speed, toneLevel, stylePrompt, signal, chunkInfo);
   }
 
-  let lastError: Error | null = null;
-  const originalApiKey = fallbackApiKey || keysToTry[0];
+  const validTtsKeys = ttsApiKeys.filter(k => k.trim() !== '')
+  const keysToTry =
+    validTtsKeys.length > 0 && fallbackApiKey
+      ? [...validTtsKeys, fallbackApiKey]
+      : fallbackApiKey
+        ? [fallbackApiKey]
+        : validTtsKeys
+
+  if (keysToTry.length === 0) {
+    // API 키 목록이 전달되지 않은 경우 (기존 호환성)
+    return _generateAudio(
+      prompt,
+      modelName,
+      speechConfig,
+      speed,
+      toneLevel,
+      stylePrompt,
+      signal,
+      chunkInfo
+    )
+  }
+
+  let lastError: Error | null = null
+  const originalApiKey = fallbackApiKey || keysToTry[0]
 
   for (let i = 0; i < keysToTry.length; i++) {
-    const currentKey = keysToTry[i];
-    const originalIndex = ttsApiKeys.indexOf(currentKey) + 1; // Find the index from the unfiltered array for logging
-    const keyType = originalIndex > 0 ? `TTS 전용 #${originalIndex}` : '기본';
+    const currentKey = keysToTry[i]
+    const originalIndex = ttsApiKeys.indexOf(currentKey) + 1 // Find the index from the unfiltered array for logging
+    const keyType = originalIndex > 0 ? `TTS 전용 #${originalIndex}` : '기본'
 
     try {
       if (keysToTry.length > 1) {
-          console.log(`[Single TTS Fallback] ${keyType} API 키 시도 중... (${i + 1}/${keysToTry.length})`);
+        console.log(
+          `[Single TTS Fallback] ${keyType} API 키 시도 중... (${i + 1}/${keysToTry.length})`
+        )
       }
-      
-      setApiKey(currentKey);
-      const result = await _generateAudio(prompt, modelName, speechConfig, speed, toneLevel, stylePrompt, signal, chunkInfo);
+
+      setApiKey(currentKey)
+      const result = await _generateAudio(
+        prompt,
+        modelName,
+        speechConfig,
+        speed,
+        toneLevel,
+        stylePrompt,
+        signal,
+        chunkInfo
+      )
 
       if (keysToTry.length > 1) {
-          console.log(`[Single TTS Fallback] ✅ ${keyType} API 키로 성공!`);
+        console.log(`[Single TTS Fallback] ✅ ${keyType} API 키로 성공!`)
       }
-      setApiKey(originalApiKey);
-      return result;
-
+      setApiKey(originalApiKey)
+      return result
     } catch (error: any) {
       if (keysToTry.length > 1) {
-          console.warn(`[Single TTS Fallback] ❌ ${keyType} API 키 실패:`, error.message);
+        console.warn(`[Single TTS Fallback] ❌ ${keyType} API 키 실패:`, error.message)
       }
-      lastError = error;
+      lastError = error
 
       if (!isRateLimitError(error)) {
-        if (keysToTry.length > 1) console.error(`[Single TTS Fallback] Rate Limit이 아닌 에러 발생, 중단:`, error.message);
-        setApiKey(originalApiKey);
-        throw error;
+        if (keysToTry.length > 1)
+          console.error(`[Single TTS Fallback] Rate Limit이 아닌 에러 발생, 중단:`, error.message)
+        setApiKey(originalApiKey)
+        throw error
       }
 
       if (i < keysToTry.length - 1) {
-        if (keysToTry.length > 1) console.log(`[Single TTS Fallback] 🔄 Rate Limit 감지, 다음 API 키로 전환...`);
-        continue;
+        if (keysToTry.length > 1)
+          console.log(`[Single TTS Fallback] 🔄 Rate Limit 감지, 다음 API 키로 전환...`)
+        continue
       }
     }
   }
 
-  setApiKey(originalApiKey);
-  throw new Error(`모든 API 키의 할당량이 초과되었습니다 (${keysToTry.length}개 시도). 마지막 에러: ${lastError?.message || '알 수 없음'}`);
-};
+  setApiKey(originalApiKey)
+  throw new Error(
+    `모든 API 키의 할당량이 초과되었습니다 (${keysToTry.length}개 시도). 마지막 에러: ${lastError?.message || '알 수 없음'}`
+  )
+}
 
 export const previewVoice = (
   voiceName: string,
@@ -627,10 +676,10 @@ export const previewVoice = (
   toneLevel: number = 3,
   stylePrompt?: string
 ): Promise<string> => {
-  const sampleText = `안녕하세요, 이것은 제 목소리입니다. 이 목소리로 멋진 오디오 콘텐츠를 만들 수 있습니다.`;
-  const model = modelName || "gemini-2.5-flash-preview-tts";
-  return generateSingleSpeakerAudio(sampleText, voiceName, model, speed, toneLevel, stylePrompt);
-};
+  const sampleText = `안녕하세요, 이것은 제 목소리입니다. 이 목소리로 멋진 오디오 콘텐츠를 만들 수 있습니다.`
+  const model = modelName || 'gemini-2.5-flash-preview-tts'
+  return generateSingleSpeakerAudio(sampleText, voiceName, model, speed, toneLevel, stylePrompt)
+}
 
 export const transcribeAudioWithSrt = async (
   base64Wav: string,
@@ -640,7 +689,9 @@ export const transcribeAudioWithSrt = async (
   speed: number = 1.0
 ): Promise<string> => {
   if (!generalAI) {
-    throw new Error("API 키가 설정되지 않았습니다. 우측 상단 설정 아이콘을 눌러 API 키를 입력해주세요.");
+    throw new Error(
+      'API 키가 설정되지 않았습니다. 우측 상단 설정 아이콘을 눌러 API 키를 입력해주세요.'
+    )
   }
 
   try {
@@ -649,12 +700,10 @@ export const transcribeAudioWithSrt = async (
         mimeType: 'audio/wav',
         data: base64Wav,
       },
-    };
+    }
 
-    const processedReference = referenceText
-      ?.replace(/\.\.\./g, ', ')
-      .replace(/…/g, ', ');
-    const numLinesSrt = processedReference?.split('\n').filter(l => l.trim()).length || 'N';
+    const processedReference = referenceText?.replace(/\.\.\./g, ', ').replace(/…/g, ', ')
+    const numLinesSrt = processedReference?.split('\n').filter(l => l.trim()).length || 'N'
 
     let promptText = `역할: 초정밀 자막 제작자 (Ultra-Precise Subtitler)
 목표: 제공된 [대본 정보]와 [오디오]를 1:1로 매칭하여 완벽한 SRT 생성 (절대 줄을 합치거나 나누지 말 것)
@@ -681,7 +730,7 @@ export const transcribeAudioWithSrt = async (
 **[참조 대본]:**
 ${referenceText}
 
-**출력**: 코드 블록(\`\`\`srt) 안에 SRT 내용만 출력하세요.`;
+**출력**: 코드 블록(\`\`\`srt) 안에 SRT 내용만 출력하세요.`
 
     if (referenceText) {
       promptText += `
@@ -697,7 +746,7 @@ ${referenceText}
 4. **가독성 분할:** 한 줄이 너무 길면(${splitCharCount}자 이상) 의미 단위로 자연스럽게 두 줄로 나누세요.
 
 **[참조 스크립트]:**
-${referenceText}`;
+${referenceText}`
     } else {
       promptText += `
 
@@ -705,7 +754,7 @@ ${referenceText}`;
 1. 오디오를 듣고 내용을 정확하게 한국어로 받아쓰세요.
 2. 문맥에 맞게 자연스럽게 줄을 나누어 자막을 생성하세요.
 3. 자막 한 줄은 최대 ${splitCharCount}자를 넘지 않도록 하세요.
-`;
+`
     }
 
     promptText += `
@@ -718,43 +767,45 @@ ${referenceText}`;
 2
 00:00:02,250 --> 00:00:05,100
 텍스트를 입력하면 목소리로 변환해드립니다.
-`;
+`
 
-    const textPart = { text: promptText };
+    const textPart = { text: promptText }
 
     // ✅ 신버전 문법 + gemini-2.5-flash
     const result = await (generalAI as any).models.generateContent({
       model: 'gemini-2.5-flash',
-      contents: [{
-        role: 'user',
-        parts: [audioPart, textPart]
-      }],
+      contents: [
+        {
+          role: 'user',
+          parts: [audioPart, textPart],
+        },
+      ],
       safetySettings: [
         { category: 'HARM_CATEGORY_HARASSMENT' as any, threshold: 'BLOCK_NONE' as any },
         { category: 'HARM_CATEGORY_HATE_SPEECH' as any, threshold: 'BLOCK_NONE' as any },
         { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT' as any, threshold: 'BLOCK_NONE' as any },
         { category: 'HARM_CATEGORY_DANGEROUS_CONTENT' as any, threshold: 'BLOCK_NONE' as any },
         { category: 'HARM_CATEGORY_CIVIC_INTEGRITY' as any, threshold: 'BLOCK_NONE' as any },
-      ]
-    });
+      ],
+    })
 
     // ✅ 응답 접근
-    let srtText = result.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? '';
+    let srtText = result.candidates?.[0]?.content?.parts?.[0]?.text?.trim() ?? ''
 
-    const match = srtText.match(/```(?:srt)?\s*([\s\S]*?)```/);
+    const match = srtText.match(/```(?:srt)?\s*([\s\S]*?)```/)
     if (match && match[1]) {
-      srtText = match[1].trim();
+      srtText = match[1].trim()
     }
 
-    return srtText;
+    return srtText
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
-      throw error;
+      throw error
     }
-    console.error("Error transcribing audio with Gemini API:", error);
-    throw handleApiError(error);
+    console.error('Error transcribing audio with Gemini API:', error)
+    throw handleApiError(error)
   }
-};
+}
 
 /**
  * Live API 단일 세션 멀티턴 방식으로 오디오 생성
@@ -770,58 +821,57 @@ export async function generateAudioWithLiveAPIMultiTurn(
   silenceBetweenLinesMs: number = 500,
   signal?: AbortSignal
 ): Promise<{
-  audioBuffer: ArrayBuffer;
-  lineTimings: { start: number; end: number }[];
-  paragraphs: string[];
+  audioBuffer: ArrayBuffer
+  lineTimings: { start: number; end: number }[]
+  paragraphs: string[]
 }> {
-
   if (!liveAI) {
-    throw new Error("API 키가 설정되지 않았습니다.");
+    throw new Error('API 키가 설정되지 않았습니다.')
   }
 
-  const audioResults: ArrayBuffer[] = [];
-  const lineTimings: { start: number; end: number }[] = [];
-  let currentLineAudio: ArrayBuffer[] = [];
-  let turnCompleteResolve: (() => void) | null = null;
-  let sessionError: Error | null = null;
-  let chunkCounter = 0; // 세션 전체 청크 카운터
+  const audioResults: ArrayBuffer[] = []
+  const lineTimings: { start: number; end: number }[] = []
+  let currentLineAudio: ArrayBuffer[] = []
+  let turnCompleteResolve: (() => void) | null = null
+  let sessionError: Error | null = null
+  let chunkCounter = 0 // 세션 전체 청크 카운터
 
   // 유효한 줄만 필터링
-  const validLines = lines.map(l => l.trim()).filter(l => l.length > 0);
+  const validLines = lines.map(l => l.trim()).filter(l => l.length > 0)
 
   if (lines.length === 0) {
-    throw new Error("생성할 텍스트가 없습니다.");
+    throw new Error('생성할 텍스트가 없습니다.')
   }
 
-  console.log(`[Gemini Live API] Starting Precision Paragraph-Based Multi-Turn session`);
+  console.log(`[Gemini Live API] Starting Precision Paragraph-Based Multi-Turn session`)
 
   // 빈 줄을 기준으로 문단(Batch) 나누기
-  const paragraphs: string[] = [];
-  let currentGroup: string[] = [];
+  const paragraphs: string[] = []
+  let currentGroup: string[] = []
 
   for (const line of lines) {
     if (line.trim().length === 0) {
       if (currentGroup.length > 0) {
-        paragraphs.push(currentGroup.join('\n'));
-        currentGroup = [];
+        paragraphs.push(currentGroup.join('\n'))
+        currentGroup = []
       }
     } else {
-      currentGroup.push(line);
+      currentGroup.push(line)
     }
   }
   if (currentGroup.length > 0) {
-    paragraphs.push(currentGroup.join('\n'));
+    paragraphs.push(currentGroup.join('\n'))
   }
 
   if (paragraphs.length === 0) {
-    throw new Error("처리할 수 있는 텍스트 내용이 없습니다.");
+    throw new Error('처리할 수 있는 텍스트 내용이 없습니다.')
   }
 
-  console.log(`[Gemini Live API] Processing ${paragraphs.length} paragraphs`);
+  console.log(`[Gemini Live API] Processing ${paragraphs.length} paragraphs`)
 
   return new Promise(async (resolve, reject) => {
     try {
-      const liveModel = 'gemini-2.5-flash-native-audio-preview-12-2025';
+      const liveModel = 'gemini-2.5-flash-native-audio-preview-12-2025'
       const session = await (liveAI as any).live.connect({
         model: liveModel,
         config: {
@@ -830,20 +880,22 @@ export async function generateAudioWithLiveAPIMultiTurn(
             voiceConfig: {
               prebuiltVoiceConfig: {
                 voiceName,
-              }
-            }
+              },
+            },
           },
           systemInstruction: {
-            parts: [{
-              text: `[Voice Persona]: Professional Voice Actor.
+            parts: [
+              {
+                text: `[Voice Persona]: Professional Voice Actor.
 [Director's Notes]: ${stylePrompt}
 [Speed/Pacing]: ${speed !== 1.0 ? `Speak at ${speed}x speed.` : 'Natural speed.'}
 [Strict Rules]: 
 1. Read the provided text EXACTLY as written. 
 2. DO NOT skip any words, symbols, or sentences. 
 3. Output ONLY the spoken audio. 
-4. DO NOT summarize or interpret.`
-            }]
+4. DO NOT summarize or interpret.`,
+              },
+            ],
           },
           safetySettings: [
             { category: 'HARM_CATEGORY_HARASSMENT' as any, threshold: 'BLOCK_NONE' as any },
@@ -855,135 +907,144 @@ export async function generateAudioWithLiveAPIMultiTurn(
         },
         callbacks: {
           onopen: () => {
-            console.log('[Gemini Live API] WebSocket opened.');
+            console.log('[Gemini Live API] WebSocket opened.')
           },
           onmessage: async (response: any) => {
-            const isTurnComplete = !!response.serverContent?.turnComplete;
+            const isTurnComplete = !!response.serverContent?.turnComplete
 
             // 오디오 청크 수집
             if (response.serverContent?.modelTurn?.parts) {
               for (const part of response.serverContent.modelTurn.parts) {
                 if (part.inlineData?.data) {
-                  const chunk = base64ToArrayBuffer(part.inlineData.data);
+                  const chunk = base64ToArrayBuffer(part.inlineData.data)
                   // 안정성을 위해 최소한의 로그 출력 유지 (로그 출력 시 발생하는 미세 지연이 수집 안정화에 도움)
-                  console.log(`[Gemini Live API] Chunk received: ${chunk.byteLength} bytes`);
-                  currentLineAudio.push(chunk);
+                  console.log(`[Gemini Live API] Chunk received: ${chunk.byteLength} bytes`)
+                  currentLineAudio.push(chunk)
                 }
               }
             }
 
             // 턴 완료 감지 (800ms 대기하여 마지막 청크 수신 보장)
             if (isTurnComplete) {
-              console.log(`[Gemini Live API] turnComplete received. Starting 800ms protection delay...`);
-              const resolveRef = turnCompleteResolve;
-              turnCompleteResolve = null;
+              console.log(
+                `[Gemini Live API] turnComplete received. Starting 800ms protection delay...`
+              )
+              const resolveRef = turnCompleteResolve
+              turnCompleteResolve = null
               if (resolveRef) {
                 setTimeout(() => {
-                  console.log(`[Gemini Live API] 800ms delay finished. Resolving turn.`);
-                  resolveRef();
-                }, 800);
+                  console.log(`[Gemini Live API] 800ms delay finished. Resolving turn.`)
+                  resolveRef()
+                }, 800)
               }
             }
 
             // 인터럽트 감지
             if (response.serverContent?.interrupted) {
-              console.warn(`[Gemini Live API] Server sent "interrupted" signal. Waiting for turnComplete anyway...`);
+              console.warn(
+                `[Gemini Live API] Server sent "interrupted" signal. Waiting for turnComplete anyway...`
+              )
             }
           },
           onerror: (e: any) => {
-            console.error('[Gemini Live API] Error:', e);
-            sessionError = new Error(e.message || 'Live API 오류');
+            console.error('[Gemini Live API] Error:', e)
+            sessionError = new Error(e.message || 'Live API 오류')
             if (turnCompleteResolve) {
-              turnCompleteResolve();
+              turnCompleteResolve()
             }
           },
           onclose: (e: any) => {
-            console.log(`[Gemini Live API] WebSocket closed. (Code ${e?.code || 'unknown'})`);
-          }
-        }
-      });
+            console.log(`[Gemini Live API] WebSocket closed. (Code ${e?.code || 'unknown'})`)
+          },
+        },
+      })
 
       // 세션 연결 완료 후 멀티턴 처리 시작
-      console.log('[Gemini Live API] Connected. Starting multi-turn loop...');
+      console.log('[Gemini Live API] Connected. Starting multi-turn loop...')
 
-      let cumulativeTimeMs = 0;
+      let cumulativeTimeMs = 0
 
       for (let i = 0; i < paragraphs.length; i++) {
         // 중단 신호 확인
         if (signal?.aborted) {
-          session.close();
-          throw new Error('사용자에 의해 중단되었습니다.');
+          session.close()
+          throw new Error('사용자에 의해 중단되었습니다.')
         }
 
-        const batchText = paragraphs[i];
+        const batchText = paragraphs[i]
 
         // 말줄임표 치환 대신 원본 텍스트 유지 (사용자님 관찰 반영)
-        const processedBatch = batchText;
+        const processedBatch = batchText
 
-        console.log(`[Gemini Live API] Requesting Paragraph ${i + 1}/${paragraphs.length}: "${processedBatch.substring(0, 30).replace(/\n/g, ' ')}..."`);
+        console.log(
+          `[Gemini Live API] Requesting Paragraph ${i + 1}/${paragraphs.length}: "${processedBatch.substring(0, 30).replace(/\n/g, ' ')}..."`
+        )
 
         // 현재 줄 오디오 초기화 및 청크 카운터 리셋
-        currentLineAudio = [];
-        chunkCounter = 0;
+        currentLineAudio = []
+        chunkCounter = 0
 
         // 턴 완료 대기 Promise 생성
-        const turnCompletePromise = new Promise<void>((res) => {
-          turnCompleteResolve = res;
-        });
+        const turnCompletePromise = new Promise<void>(res => {
+          turnCompleteResolve = res
+        })
 
         // Send the batch with a clear instruction
-        const linePrompt = `Please read this text exactly: "${processedBatch}"`;
+        const linePrompt = `Please read this text exactly: "${processedBatch}"`
 
         await session.sendClientContent({
           turns: [{ role: 'user', parts: [{ text: linePrompt }] }],
-          turnComplete: true
-        });
+          turnComplete: true,
+        })
 
         // 턴 완료 대기
-        await turnCompletePromise;
+        await turnCompletePromise
 
         // 에러 체크
         if (sessionError) {
-          session.close();
-          throw sessionError;
+          session.close()
+          throw sessionError
         }
 
         // 결과 저장
-        const lineAudio = mergeArrayBuffers(currentLineAudio);
-        audioResults.push(lineAudio);
+        const lineAudio = mergeArrayBuffers(currentLineAudio)
+        audioResults.push(lineAudio)
 
         // 타이밍 계산 (24kHz, 16bit 기준)
-        // Note: Gemini standard sampling rate for Native Audio is often 24kHz or 16kHz. 
+        // Note: Gemini standard sampling rate for Native Audio is often 24kHz or 16kHz.
         // We'll use 24kHz as per user instructions.
-        const lineDurationMs = (lineAudio.byteLength / 2 / 24000) * 1000;
+        const lineDurationMs = (lineAudio.byteLength / 2 / 24000) * 1000
         lineTimings.push({
           start: cumulativeTimeMs,
-          end: cumulativeTimeMs + lineDurationMs
-        });
-        cumulativeTimeMs += lineDurationMs + silenceBetweenLinesMs;
+          end: cumulativeTimeMs + lineDurationMs,
+        })
+        cumulativeTimeMs += lineDurationMs + silenceBetweenLinesMs
 
-        console.log(`[Gemini Live API] Line ${i + 1} completed. ${lineAudio.byteLength} bytes, ${lineDurationMs.toFixed(0)}ms`);
+        console.log(
+          `[Gemini Live API] Line ${i + 1} completed. ${lineAudio.byteLength} bytes, ${lineDurationMs.toFixed(0)}ms`
+        )
       }
 
       // 세션 종료
-      session.close();
+      session.close()
 
       // 무음 삽입하여 최종 병합
-      console.log(`[Gemini Live API] Merging ${audioResults.length} audio segments with ${silenceBetweenLinesMs}ms silence...`);
-      const finalAudio = mergeAudioWithSilence(audioResults, silenceBetweenLinesMs);
+      console.log(
+        `[Gemini Live API] Merging ${audioResults.length} audio segments with ${silenceBetweenLinesMs}ms silence...`
+      )
+      const finalAudio = mergeAudioWithSilence(audioResults, silenceBetweenLinesMs)
 
-      console.log(`[Gemini Live API] Complete! Total: ${finalAudio.byteLength} bytes`);
+      console.log(`[Gemini Live API] Complete! Total: ${finalAudio.byteLength} bytes`)
 
       resolve({
         audioBuffer: finalAudio,
         lineTimings: lineTimings,
-        paragraphs: paragraphs
-      });
-
+        paragraphs: paragraphs,
+      })
     } catch (error) {
-      reject(error);
+      reject(error)
     }
-  });
+  })
 }
 
 /**
@@ -998,42 +1059,43 @@ export async function matchSubtitlesWithAI(
   onProgress?: (status: string) => void
 ): Promise<Array<{ scriptIndex: number; capCutStartIndex: number; capCutEndIndex: number }>> {
   if (!generalAI) {
-    throw new Error('Gemini API가 초기화되지 않았습니다. API 키를 확인해주세요.');
+    throw new Error('Gemini API가 초기화되지 않았습니다. API 키를 확인해주세요.')
   }
 
   // 배치 처리 (SDK 제한으로 인해 한 번에 처리 불가)
-  const BATCH_SIZE = 100;
-  const totalBatches = Math.ceil(scriptLines.length / BATCH_SIZE);
-  const allMatches: Array<{ scriptIndex: number; capCutStartIndex: number; capCutEndIndex: number }> = [];
+  const BATCH_SIZE = 100
+  const totalBatches = Math.ceil(scriptLines.length / BATCH_SIZE)
+  const allMatches: Array<{
+    scriptIndex: number
+    capCutStartIndex: number
+    capCutEndIndex: number
+  }> = []
 
-  console.log(`[AI Matching] 배치 처리 시작: ${totalBatches}개 배치`);
-  onProgress?.(` AI 매칭 준비중... (${scriptLines.length}줄)`);
+  console.log(`[AI Matching] 배치 처리 시작: ${totalBatches}개 배치`)
+  onProgress?.(` AI 매칭 준비중... (${scriptLines.length}줄)`)
 
   for (let batchIndex = 0; batchIndex < totalBatches; batchIndex++) {
-    const startIdx = batchIndex * BATCH_SIZE;
-    const endIdx = Math.min(startIdx + BATCH_SIZE, scriptLines.length);
-    const batchScriptLines = scriptLines.slice(startIdx, endIdx);
+    const startIdx = batchIndex * BATCH_SIZE
+    const endIdx = Math.min(startIdx + BATCH_SIZE, scriptLines.length)
+    const batchScriptLines = scriptLines.slice(startIdx, endIdx)
 
-    const progress = `AI 매칭 중 (${batchIndex + 1}/${totalBatches})... ${startIdx + 1}~${endIdx}줄`;
-    console.log(`[AI Matching] ${progress}`);
-    onProgress?.(progress);
+    const progress = `AI 매칭 중 (${batchIndex + 1}/${totalBatches})... ${startIdx + 1}~${endIdx}줄`
+    console.log(`[AI Matching] ${progress}`)
+    onProgress?.(progress)
 
     // 이전 배치의 마지막 캡컷 인덱스 계산
-    const lastCapCutIndex = allMatches.length > 0
-      ? Math.max(...allMatches.map(m => m.capCutEndIndex)) + 1
-      : 0;
+    const lastCapCutIndex =
+      allMatches.length > 0 ? Math.max(...allMatches.map(m => m.capCutEndIndex)) + 1 : 0
 
     // 프롬프트 생성 (현재 배치만)
     const capCutText = capCutSrtLines
       .slice(lastCapCutIndex)
       .map(line => `[${line.index}] ${line.text}`)
-      .join('\n');
+      .join('\n')
 
-    const scriptText = batchScriptLines
-      .map(line => `[${line.index}] ${line.text}`)
-      .join('\n');
+    const scriptText = batchScriptLines.map(line => `[${line.index}] ${line.text}`).join('\n')
 
-  const prompt = `당신은 영상 자막 타임코드 매칭 전문가입니다.
+    const prompt = `당신은 영상 자막 타임코드 매칭 전문가입니다.
 
 **배경:**
 - 원본 대본: 나레이션용으로 작성된 완전한 스크립트
@@ -1086,21 +1148,23 @@ ${scriptText}
 
 scriptIndex: 원본 대본 라인 번호 (${startIdx}부터 시작)
 capCutStartIndex: 매칭되는 첫 번째 캡컷 라인 번호
-capCutEndIndex: 매칭되는 마지막 캡컷 라인 번호 (포함)`;
+capCutEndIndex: 매칭되는 마지막 캡컷 라인 번호 (포함)`
 
     try {
       // Gemini API 호출 (올바른 파라미터 구조)
       const result = await (generalAI as any).models.generateContent({
         model: 'gemini-2.5-flash',
-        contents: [{
-          role: 'user',
-          parts: [{ text: prompt }]
-        }],
+        contents: [
+          {
+            role: 'user',
+            parts: [{ text: prompt }],
+          },
+        ],
         generationConfig: {
           temperature: 0.1,
           topP: 0.95,
           topK: 40,
-          maxOutputTokens: 65535  // Gemini 2.5 Flash 최대 출력 토큰 (65K)
+          maxOutputTokens: 65535, // Gemini 2.5 Flash 최대 출력 토큰 (65K)
         },
         safetySettings: [
           { category: 'HARM_CATEGORY_HARASSMENT' as any, threshold: 'BLOCK_NONE' as any },
@@ -1108,27 +1172,31 @@ capCutEndIndex: 매칭되는 마지막 캡컷 라인 번호 (포함)`;
           { category: 'HARM_CATEGORY_SEXUALLY_EXPLICIT' as any, threshold: 'BLOCK_NONE' as any },
           { category: 'HARM_CATEGORY_DANGEROUS_CONTENT' as any, threshold: 'BLOCK_NONE' as any },
           { category: 'HARM_CATEGORY_CIVIC_INTEGRITY' as any, threshold: 'BLOCK_NONE' as any },
-        ]
-      });
+        ],
+      })
 
       // 응답 텍스트 추출
-      let responseText = '';
+      let responseText = ''
       if (result?.candidates?.[0]?.content?.parts?.[0]?.text) {
-        responseText = result.candidates[0].content.parts[0].text.trim();
+        responseText = result.candidates[0].content.parts[0].text.trim()
       } else {
-        throw new Error('AI 응답 형식이 올바르지 않습니다.');
+        throw new Error('AI 응답 형식이 올바르지 않습니다.')
       }
 
       // 상세 로깅 추가
-      const finishReason = result?.candidates?.[0]?.finishReason;
-      console.log(`[AI Matching] 배치 ${batchIndex + 1} 응답 길이: ${responseText.length} 문자`);
-      console.log(`[AI Matching] 배치 ${batchIndex + 1} finishReason: ${finishReason || 'UNKNOWN'}`);
+      const finishReason = result?.candidates?.[0]?.finishReason
+      console.log(`[AI Matching] 배치 ${batchIndex + 1} 응답 길이: ${responseText.length} 문자`)
+      console.log(`[AI Matching] 배치 ${batchIndex + 1} finishReason: ${finishReason || 'UNKNOWN'}`)
 
       // finishReason 검증
       if (finishReason && finishReason !== 'STOP') {
-        console.warn(`[AI Matching] 배치 ${batchIndex + 1} 경고: finishReason = ${finishReason} (조기 종료 가능성)`);
+        console.warn(
+          `[AI Matching] 배치 ${batchIndex + 1} 경고: finishReason = ${finishReason} (조기 종료 가능성)`
+        )
         if (finishReason === 'MAX_TOKENS') {
-          console.error(`[AI Matching] 배치 ${batchIndex + 1} 토큰 제한 초과! maxOutputTokens를 더 늘려야 할 수 있습니다.`);
+          console.error(
+            `[AI Matching] 배치 ${batchIndex + 1} 토큰 제한 초과! maxOutputTokens를 더 늘려야 할 수 있습니다.`
+          )
         }
       }
 
@@ -1136,39 +1204,42 @@ capCutEndIndex: 매칭되는 마지막 캡컷 라인 번호 (포함)`;
       if (responseText.length > 500) {
         const preview = {
           start: responseText.substring(0, 200),
-          end: responseText.substring(responseText.length - 200)
-        };
-        console.log(`[AI Matching] 배치 ${batchIndex + 1} 응답 미리보기:`, preview);
+          end: responseText.substring(responseText.length - 200),
+        }
+        console.log(`[AI Matching] 배치 ${batchIndex + 1} 응답 미리보기:`, preview)
       } else {
-        console.log(`[AI Matching] 배치 ${batchIndex + 1} 전체 응답:`, responseText);
+        console.log(`[AI Matching] 배치 ${batchIndex + 1} 전체 응답:`, responseText)
       }
 
       // JSON 추출 (마크다운 코드 블록 제거)
       if (responseText.startsWith('```json')) {
-        responseText = responseText.replace(/^```json\n/, '').replace(/\n```$/, '');
+        responseText = responseText.replace(/^```json\n/, '').replace(/\n```$/, '')
       } else if (responseText.startsWith('```')) {
-        responseText = responseText.replace(/^```\n/, '').replace(/\n```$/, '');
+        responseText = responseText.replace(/^```\n/, '').replace(/\n```$/, '')
       }
 
       // JSON 파싱
-      const batchMatches = JSON.parse(responseText);
+      const batchMatches = JSON.parse(responseText)
 
       if (!Array.isArray(batchMatches)) {
-        throw new Error('AI 응답이 배열 형식이 아닙니다.');
+        throw new Error('AI 응답이 배열 형식이 아닙니다.')
       }
 
-      console.log(`[AI Matching] 배치 ${batchIndex + 1} ✅ 성공: ${batchMatches.length}개 매칭 완료`);
+      console.log(
+        `[AI Matching] 배치 ${batchIndex + 1} ✅ 성공: ${batchMatches.length}개 매칭 완료`
+      )
 
       // 결과 누적
-      allMatches.push(...batchMatches);
-
+      allMatches.push(...batchMatches)
     } catch (error) {
-      console.error(`[AI Matching] 배치 ${batchIndex + 1} 오류:`, error);
-      throw new Error(`배치 ${batchIndex + 1} AI 매칭 실패: ${error instanceof Error ? error.message : '알 수 없는 오류'}`);
+      console.error(`[AI Matching] 배치 ${batchIndex + 1} 오류:`, error)
+      throw new Error(
+        `배치 ${batchIndex + 1} AI 매칭 실패: ${error instanceof Error ? error.message : '알 수 없는 오류'}`
+      )
     }
   }
 
-  console.log(`[AI Matching] ✅ 전체 완료: ${allMatches.length}개 매칭 완료`);
-  onProgress?.(`AI 매칭 완료! (${allMatches.length}개)`);
-  return allMatches;
+  console.log(`[AI Matching] ✅ 전체 완료: ${allMatches.length}개 매칭 완료`)
+  onProgress?.(`AI 매칭 완료! (${allMatches.length}개)`)
+  return allMatches
 }
