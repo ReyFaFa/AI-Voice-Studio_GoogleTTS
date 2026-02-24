@@ -282,7 +282,6 @@ export function App() {
     const targetIndex = direction === 'up' ? index - 1 : index + 1
 
     if (targetIndex < 0 || targetIndex >= newKeys.length) return
-
     ;[newKeys[index], newKeys[targetIndex]] = [newKeys[targetIndex], newKeys[index]]
     setTtsApiKeys(newKeys)
   }
@@ -598,7 +597,9 @@ export function App() {
     setLoadingStatus('대본 분석 및 분할 중...')
     setError(null)
     abortControllerRef.current = new AbortController()
-    const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)()
+    const audioContext = new (window.AudioContext || (window as any).webkitAudioContext)({
+      sampleRate: 48000,
+    })
     try {
       // Dual-Limit Strategy: 1800 chars OR 40 lines, whichever comes first.
       // This prevents AI from hallucinating or collapsing many short lines.
@@ -1401,6 +1402,22 @@ export function App() {
     abortControllerRef.current = new AbortController()
 
     try {
+      // ✅ 최신 대본(scriptLines)에서 해당 청크 영역의 텍스트를 동적으로 추출
+      // 각 청크가 담고 있는 줄 수를 기준으로 scriptLines의 오프셋을 계산
+      const currentFullText = scriptLines.map(l => l.text).join('\n')
+      const allLines = currentFullText.split('\n').filter(l => l.trim().length > 0)
+
+      // 청크별 줄 수 배열 계산
+      const chunkLineCounts = targetItem.audioChunks.map(
+        c => c.text.split('\n').filter(l => l.trim().length > 0).length
+      )
+      const lineOffset = chunkLineCounts.slice(0, chunkIndex).reduce((a, b) => a + b, 0)
+      const chunkLineCount = chunkLineCounts[chunkIndex]
+      const updatedChunkLines = allLines.slice(lineOffset, lineOffset + chunkLineCount)
+      // 대본 라인 수가 달라진 경우도 안전하게 처리
+      const updatedChunkText =
+        updatedChunkLines.length > 0 ? updatedChunkLines.join('\n') : chunk.text // fallback: 수정 전 텍스트
+
       // Extract prev text context for regeneration
       let previousText = undefined
       if (chunkIndex > 0) {
@@ -1411,7 +1428,7 @@ export function App() {
 
       const ttsKeys = ttsApiKeys.filter(item => item.key.trim() !== '').map(item => item.key)
       const base64Pcm = await generateSingleSpeakerAudio(
-        chunk.text,
+        updatedChunkText, // ✅ 최신 대본 텍스트 사용
         singleSpeakerVoice,
         selectedModel,
         speechSpeed,
@@ -1423,16 +1440,17 @@ export function App() {
         userApiKey
       )
 
-      const audioContext = new AudioContext()
+      const audioContext = new AudioContext({ sampleRate: 48000 })
       const wavBlob = createWavBlobFromBase64Pcm(base64Pcm)
       const newBuffer = await audioContext.decodeAudioData(await wavBlob.arrayBuffer())
 
-      // 청크 교체
+      // 청크 교체 (텍스트도 최신 버전으로 갱신)
       const updatedChunks = [...targetItem.audioChunks]
       updatedChunks[chunkIndex] = {
         ...chunk,
         id: `chunk-${chunkIndex}-${Date.now()}`,
         buffer: newBuffer,
+        text: updatedChunkText, // ✅ 청크 내부 text도 최신 대본으로 업데이트
         durationMs: newBuffer.duration * 1000,
       }
 
