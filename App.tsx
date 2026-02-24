@@ -665,8 +665,8 @@ export function App() {
       } else {
         // --- STRATEGY UPDATE: Limit chunk sizes to < 2m30s to prevent high-frequency noise artifacts ---
         // 청크 크기 제한: Gemini TTS 후반부 치찰음/쇳소리 방지 (3분+ 시 고주파 아티팩트 누적)
-        // 최대 1000자, 25줄, 그리고 가장 중요한 예상 낭독 시간 145초(2분 25초) 중 선행 도달 기준으로 분할
-        const textChunks = splitTextIntoChunks(fullText, 1000, 25, 145)
+        // 최대 2500자, 50줄 중 선행 도달 기준으로 분할 (sampleRate 48kHz 고정으로 고주파 문제 해결됨)
+        const textChunks = splitTextIntoChunks(fullText, 2500, 50)
         const totalChunks = textChunks.length
 
         let mergedAudioBuffer: AudioBuffer | null = null
