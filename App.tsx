@@ -669,7 +669,7 @@ export function App() {
         // 청크 크기 제한: Gemini TTS 후반부 치찰음/쇳소리 방지 (3분+ 시 고주파 아티팩트 누적)
         // 최대 2500자, 50줄 중 선행 도달 기준으로 분할 (sampleRate 48kHz 고정으로 고주파 문제 해결됨)
         // maxEstimatedSeconds를 9999로 설정하여 시간 기반 분할 비활성화 (글자수/줄수만 기준으로 사용)
-        const textChunks = splitTextIntoChunks(fullText, 1200, 25, 9999)
+        const textChunks = splitTextIntoChunks(fullText, 2500, 50, 9999)
         const totalChunks = textChunks.length
 
         let mergedAudioBuffer: AudioBuffer | null = null

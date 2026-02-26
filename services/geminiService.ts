@@ -471,6 +471,7 @@ async function _generateAudio(
         speechConfig: isNativeAudio ? undefined : speechConfig,
         generationConfig: {
           temperature: 0.2, // Balance between voice consistency and emotional richness
+          maxOutputTokens: 8192, // 충분히 큰 값을 주어 MAX_TOKENS로 중간에 잘림 방지
         },
       },
       safetySettings: [
