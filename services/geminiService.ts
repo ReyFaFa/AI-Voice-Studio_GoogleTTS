@@ -467,6 +467,7 @@ async function _generateAudio(
       model: modelName,
       contents: [{ role: 'user', parts: [{ text: finalPrompt }] }],
       config: {
+        abortSignal: signal,
         responseModalities: ['AUDIO'],
         speechConfig: isNativeAudio ? undefined : speechConfig,
         generationConfig: {
