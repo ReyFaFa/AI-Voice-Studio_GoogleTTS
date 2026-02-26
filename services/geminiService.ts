@@ -498,11 +498,13 @@ async function _generateAudio(
     const candidate = response.candidates?.[0]
 
     // Check finishReason
-    if (
-      candidate?.finishReason &&
-      candidate.finishReason !== 'STOP' &&
-      candidate.finishReason !== 'MAX_TOKENS'
-    ) {
+    if (candidate?.finishReason === 'MAX_TOKENS') {
+      throw new Error(
+        `대본이 너무 길어 전체 오디오를 생성하지 못하고 중간에 끊겼습니다 (MAX_TOKENS). 청크 분할 설정(글자 수 제한)을 더 줄여주세요.`
+      )
+    }
+
+    if (candidate?.finishReason && candidate.finishReason !== 'STOP') {
       console.warn(
         `[Gemini TTS] Unusual finishReason: ${candidate.finishReason}. Audio might be truncated.`
       )

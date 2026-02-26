@@ -3,6 +3,7 @@ import {
   adjustSrtGaps,
   analyzeScript,
   audioBufferToWavBase64,
+  createSilenceBuffer,
   createWavBlobFromBase64Pcm,
   detectSilence,
   downloadChunksAsZip,
@@ -668,7 +669,7 @@ export function App() {
         // 청크 크기 제한: Gemini TTS 후반부 치찰음/쇳소리 방지 (3분+ 시 고주파 아티팩트 누적)
         // 최대 2500자, 50줄 중 선행 도달 기준으로 분할 (sampleRate 48kHz 고정으로 고주파 문제 해결됨)
         // maxEstimatedSeconds를 9999로 설정하여 시간 기반 분할 비활성화 (글자수/줄수만 기준으로 사용)
-        const textChunks = splitTextIntoChunks(fullText, 2500, 50, 9999)
+        const textChunks = splitTextIntoChunks(fullText, 1200, 25, 9999)
         const totalChunks = textChunks.length
 
         let mergedAudioBuffer: AudioBuffer | null = null
@@ -687,135 +688,177 @@ export function App() {
           }
 
           const chunkText = textChunks[i]
+          const MAX_RETRIES = 3
+          let chunkSuccess = false
 
-          try {
-            // Add a small delay between requests to avoid 429 Too Many Requests
-            if (i > 0) {
-              await new Promise<void>((resolve, reject) => {
-                const signal = abortControllerRef.current?.signal
-                if (signal?.aborted) {
-                  reject(new DOMException('중단됨', 'AbortError'))
-                  return
-                }
-                const timer = setTimeout(() => {
-                  signal?.removeEventListener('abort', onAbort)
-                  resolve()
-                }, 5000)
-                const onAbort = () => {
-                  clearTimeout(timer)
-                  reject(new DOMException('중단됨', 'AbortError'))
-                }
-                signal?.addEventListener('abort', onAbort, { once: true })
-              })
-            }
-
-            console.log(`[Chunk Loop] Starting chunk ${i + 1}/${totalChunks}...`)
-            setLoadingStatus(`오디오 생성 중 (${i + 1}/${totalChunks})...`)
-
-            // Extract prev text context
-            let previousText = undefined
-            if (i > 0) {
-              const prevLines = textChunks[i - 1].split('\n').filter(l => l.trim().length > 0)
-              // Take up to last 3 lines
-              previousText = prevLines.slice(-3).join('\n')
-            }
-
-            const ttsKeys = ttsApiKeys.filter(item => item.key.trim() !== '').map(item => item.key)
-            // Step 2: Generate Audio for this chunk
-            const base64Pcm = await generateSingleSpeakerAudio(
-              chunkText,
-              singleSpeakerVoice,
-              selectedModel,
-              speechSpeed,
-              toneLevel,
-              stylePrompt,
-              abortControllerRef.current.signal,
-              { chunkIndex: i, totalChunks: totalChunks, previousText },
-              ttsKeys,
-              userApiKey
-            )
-
-            setLoadingStatus(`오디오 처리 중 (${i + 1}/${totalChunks})...`)
-            const chunkBlob = createWavBlobFromBase64Pcm(base64Pcm)
-            let chunkBuffer = await audioContext.decodeAudioData(await chunkBlob.arrayBuffer())
-
-            // ✅ 청크 끝 무음 제거 (Gemini API가 추가하는 패딩 제거)
-            console.log(`[Chunk ${i + 1}] Before trim: ${chunkBuffer.duration.toFixed(2)}s`)
-            chunkBuffer = trimTrailingSilence(chunkBuffer, 0.03, 0.3)
-            console.log(`[Chunk ${i + 1}] After trim: ${chunkBuffer.duration.toFixed(2)}s`)
-
-            // Step 3: Direct Script-to-SRT Mapping (No AI transcription)
-            const inputLines = chunkText.split('\n').filter(line => line.trim().length > 0)
-            const totalDurationMs = chunkBuffer.duration * 1000
-            const avgLineDurationMs = totalDurationMs / inputLines.length
-
-            const parsedChunkSrt: SrtLine[] = inputLines.map((line, idx) => {
-              const lineStartMs = idx * avgLineDurationMs
-              const lineEndMs = (idx + 1) * avgLineDurationMs
-              const globalIndex = allParsedSrt.length + idx + 1
-              return {
-                id: `srt-${globalIndex}-${Date.now()}`,
-                index: globalIndex,
-                startTime: msToSrtTime(lineStartMs),
-                endTime: msToSrtTime(lineEndMs),
-                text: line,
+          for (let attempt = 1; attempt <= MAX_RETRIES; attempt++) {
+            try {
+              // 중단 신호 재확인
+              if (abortControllerRef.current?.signal.aborted) {
+                throw new DOMException('사용자에 의해 중단되었습니다.', 'AbortError')
               }
-            })
 
-            // Step 4: Apply total time offset to this chunk's timing
-            parsedChunkSrt.forEach(line => {
-              const shiftedStartMs = srtTimeToMs(line.startTime) + currentTimeOffsetMs
-              const shiftedEndMs = srtTimeToMs(line.endTime) + currentTimeOffsetMs
-              allParsedSrt.push({
-                ...line,
-                startTime: msToSrtTime(shiftedStartMs),
-                endTime: msToSrtTime(shiftedEndMs),
-              })
-            })
+              // Add a small delay between requests to avoid 429 Too Many Requests
+              if (i > 0 || attempt > 1) {
+                await new Promise<void>((resolve, reject) => {
+                  const signal = abortControllerRef.current?.signal
+                  if (signal?.aborted) {
+                    reject(new DOMException('중단됨', 'AbortError'))
+                    return
+                  }
+                  const waitTime = attempt > 1 ? 2000 * attempt : 5000 // 재시도시 대기시간 증가
+                  const timer = setTimeout(() => {
+                    signal?.removeEventListener('abort', onAbort)
+                    resolve()
+                  }, waitTime)
+                  const onAbort = () => {
+                    clearTimeout(timer)
+                    reject(new DOMException('중단됨', 'AbortError'))
+                  }
+                  signal?.addEventListener('abort', onAbort, { once: true })
+                })
+              }
 
-            // Step 5: Merge Audio Buffers
-            if (!mergedAudioBuffer) {
-              mergedAudioBuffer = chunkBuffer
-            } else {
-              const combined = audioContext.createBuffer(
-                mergedAudioBuffer.numberOfChannels,
-                mergedAudioBuffer.length + chunkBuffer.length,
-                mergedAudioBuffer.sampleRate
+              console.log(
+                `[Chunk Loop] Starting chunk ${i + 1}/${totalChunks} (Attempt ${attempt})...`
               )
-              for (let channel = 0; channel < mergedAudioBuffer.numberOfChannels; channel++) {
-                const combinedData = combined.getChannelData(channel)
-                combinedData.set(mergedAudioBuffer.getChannelData(channel), 0)
-                combinedData.set(chunkBuffer.getChannelData(channel), mergedAudioBuffer.length)
+              setLoadingStatus(
+                attempt > 1
+                  ? `청크 ${i + 1} 재시도 중 (${attempt}/${MAX_RETRIES})...`
+                  : `오디오 생성 중 (${i + 1}/${totalChunks})...`
+              )
+
+              // Extract prev text context
+              let previousText = undefined
+              if (i > 0) {
+                const prevLines = textChunks[i - 1].split('\n').filter(l => l.trim().length > 0)
+                // Take up to last 3 lines
+                previousText = prevLines.slice(-3).join('\n')
               }
-              mergedAudioBuffer = combined
+
+              const ttsKeys = ttsApiKeys
+                .filter(item => item.key.trim() !== '')
+                .map(item => item.key)
+              // Step 2: Generate Audio for this chunk
+              const base64Pcm = await generateSingleSpeakerAudio(
+                chunkText,
+                singleSpeakerVoice,
+                selectedModel,
+                speechSpeed,
+                toneLevel,
+                stylePrompt,
+                abortControllerRef.current.signal,
+                { chunkIndex: i, totalChunks: totalChunks, previousText },
+                ttsKeys,
+                userApiKey
+              )
+
+              setLoadingStatus(`오디오 처리 중 (${i + 1}/${totalChunks})...`)
+              const chunkBlob = createWavBlobFromBase64Pcm(base64Pcm)
+              let chunkBuffer = await audioContext.decodeAudioData(await chunkBlob.arrayBuffer())
+
+              // ✅ 청크 끝 무음 제거 (Gemini API가 추가하는 패딩 제거)
+              console.log(`[Chunk ${i + 1}] Before trim: ${chunkBuffer.duration.toFixed(2)}s`)
+              chunkBuffer = trimTrailingSilence(chunkBuffer, 0.03, 0.3)
+              console.log(`[Chunk ${i + 1}] After trim: ${chunkBuffer.duration.toFixed(2)}s`)
+
+              // Step 3: Direct Script-to-SRT Mapping (No AI transcription)
+              const inputLines = chunkText.split('\n').filter(line => line.trim().length > 0)
+              const totalDurationMs = chunkBuffer.duration * 1000
+              const avgLineDurationMs = totalDurationMs / inputLines.length
+
+              const parsedChunkSrt: SrtLine[] = inputLines.map((line, idx) => {
+                const lineStartMs = idx * avgLineDurationMs
+                const lineEndMs = (idx + 1) * avgLineDurationMs
+                const globalIndex = allParsedSrt.length + idx + 1
+                return {
+                  id: `srt-${globalIndex}-${Date.now()}`,
+                  index: globalIndex,
+                  startTime: msToSrtTime(lineStartMs),
+                  endTime: msToSrtTime(lineEndMs),
+                  text: line,
+                }
+              })
+
+              // Step 4: Apply total time offset to this chunk's timing
+              parsedChunkSrt.forEach(line => {
+                const shiftedStartMs = srtTimeToMs(line.startTime) + currentTimeOffsetMs
+                const shiftedEndMs = srtTimeToMs(line.endTime) + currentTimeOffsetMs
+                allParsedSrt.push({
+                  ...line,
+                  startTime: msToSrtTime(shiftedStartMs),
+                  endTime: msToSrtTime(shiftedEndMs),
+                })
+              })
+
+              // Step 5: Merge Audio Buffers
+              if (!mergedAudioBuffer) {
+                mergedAudioBuffer = chunkBuffer
+              } else {
+                const combined = audioContext.createBuffer(
+                  mergedAudioBuffer.numberOfChannels,
+                  mergedAudioBuffer.length + chunkBuffer.length,
+                  mergedAudioBuffer.sampleRate
+                )
+                for (let channel = 0; channel < mergedAudioBuffer.numberOfChannels; channel++) {
+                  const combinedData = combined.getChannelData(channel)
+                  combinedData.set(mergedAudioBuffer.getChannelData(channel), 0)
+                  combinedData.set(chunkBuffer.getChannelData(channel), mergedAudioBuffer.length)
+                }
+                mergedAudioBuffer = combined
+              }
+
+              // Step 6: 청크별 개별 저장 (병합 전)
+              audioChunkItems.push({
+                id: `chunk-${i}-${Date.now()}`,
+                index: i,
+                buffer: chunkBuffer,
+                text: chunkText,
+                durationMs: chunkBuffer.duration * 1000,
+              })
+
+              currentTimeOffsetMs += chunkBuffer.duration * 1000
+
+              // ✅ 청크 끝에 1초 무음 간격 추가 (마지막 청크인지 무관하게 부드러운 연결을 위해 삽입)
+              if (i < totalChunks - 1) {
+                const silenceBuffer = createSilenceBuffer(audioContext, 1.0)
+                const combinedWithSilence = audioContext.createBuffer(
+                  mergedAudioBuffer.numberOfChannels,
+                  mergedAudioBuffer.length + silenceBuffer.length,
+                  mergedAudioBuffer.sampleRate
+                )
+                for (let channel = 0; channel < mergedAudioBuffer.numberOfChannels; channel++) {
+                  const combinedData = combinedWithSilence.getChannelData(channel)
+                  combinedData.set(mergedAudioBuffer.getChannelData(channel), 0)
+                  combinedData.set(silenceBuffer.getChannelData(channel), mergedAudioBuffer.length)
+                }
+                mergedAudioBuffer = combinedWithSilence
+                currentTimeOffsetMs += 1000 // 시간 오프셋도 무음 시간만큼 증가
+              }
+
+              console.log(`[Chunk Loop] Successfully finished chunk ${i + 1}/${totalChunks}.`)
+              chunkSuccess = true
+              break // 성공 시 루프 탈출
+            } catch (chunkError) {
+              if (chunkError instanceof DOMException && chunkError.name === 'AbortError') {
+                throw chunkError
+              }
+
+              console.error(
+                `[Chunk Loop] Error in chunk ${i + 1} (Attempt ${attempt}):`,
+                chunkError
+              )
+
+              if (attempt === MAX_RETRIES) {
+                if (i === 0) throw chunkError // 첫 청크 실패는 즉시 에러 보고
+
+                failedChunkIndices.push(i)
+                setError(
+                  `청크 ${i + 1} 생성 실패 (${MAX_RETRIES}회 재시도 초과). 다음 청크 진행 중...`
+                )
+                console.log(`[Chunk Loop] Chunk ${i + 1} permanently failed, continuing...`)
+              }
             }
-
-            // Step 6: 청크별 개별 저장 (병합 전)
-            audioChunkItems.push({
-              id: `chunk-${i}-${Date.now()}`,
-              index: i,
-              buffer: chunkBuffer,
-              text: chunkText,
-              durationMs: chunkBuffer.duration * 1000,
-            })
-
-            currentTimeOffsetMs += chunkBuffer.duration * 1000
-            console.log(`[Chunk Loop] Successfully finished chunk ${i + 1}/${totalChunks}.`)
-          } catch (chunkError) {
-            // 사용자 중단은 즉시 전파
-            if (chunkError instanceof DOMException && chunkError.name === 'AbortError') {
-              throw chunkError
-            }
-
-            console.error(`[Chunk Loop] Error in chunk ${i + 1}:`, chunkError)
-
-            // 첫 번째 청크 실패는 치명적 오류
-            if (i === 0) throw chunkError
-
-            // 실패 청크 기록 후 계속 진행
-            failedChunkIndices.push(i)
-            setError(`청크 ${i + 1} 생성 실패. 다음 청크 계속 진행 중...`)
-            console.log(`[Chunk Loop] Chunk ${i + 1} failed, continuing to next chunk...`)
           }
         }
 

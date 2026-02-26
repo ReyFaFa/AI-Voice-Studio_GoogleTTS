@@ -269,6 +269,15 @@ export const trimTrailingSilence = (
   return sliceAudioBuffer(audioBuffer, 0, trimEndSample / sampleRate, audioCtx)
 }
 
+/**
+ * 지정된 길이(초)의 무음 AudioBuffer를 생성합니다.
+ */
+export const createSilenceBuffer = (audioCtx: AudioContext, durationSec: number): AudioBuffer => {
+  const sampleRate = audioCtx.sampleRate
+  const frameCount = Math.ceil(sampleRate * durationSec)
+  return audioCtx.createBuffer(1, frameCount, sampleRate)
+}
+
 // =================================================================================
 // TEXT & SCRIPT UTILS
 // =================================================================================
