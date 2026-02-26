@@ -6,7 +6,7 @@ echo Dependencies checked.
 
 echo.
 echo [2/3] Checking port 3000...
-for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":3000" ^| findstr "LISTENING"') do (
+for /f "tokens=5" %%a in ('netstat -aon ^| findstr ":3000 " ^| findstr "LISTENING"') do (
     echo Port 3000 is in use by PID %%a. Killing process...
     taskkill /F /PID %%a
     timeout /t 2 >nul
