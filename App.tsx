@@ -521,10 +521,11 @@ export function App() {
       if (triggers.length === 0) return prev
 
       const pattern = `([${triggers.join('')}])`
-      // Regex to match trigger char followed by whitespace(s)
-      const splitRegex = new RegExp(`${pattern}\\s+`, 'g')
-      // Regex to match trigger char at the very end of string
-      const endRegex = new RegExp(`${pattern}$`, 'g')
+      // 문장부호 뒤에 닫는 따옴표등이 올 수 있고, 그 뒤에 공백이 오는 경우를 처리
+      // 예: ." 또는 .' 또는 .”
+      const quotePattern = `["'”’]?`
+      const splitRegex = new RegExp(`(${pattern}${quotePattern})\\s+`, 'g')
+      const endRegex = new RegExp(`(${pattern}${quotePattern})$`, 'g')
 
       const newText = fullText.replace(splitRegex, '$1\n').replace(endRegex, '$1\n')
 
