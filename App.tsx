@@ -521,6 +521,9 @@ export function App() {
 
       if (triggers.length === 0) return prev
 
+      // 보호할 패턴 (말줄임표 등 연속된 마침표)을 임시 문자로 치환
+      let safeText = fullText.replace(/\.{2,}/g, match => match.replace(/\./g, '___DOT___'))
+
       const pattern = `([${triggers.join('')}])`
       // 문장부호 뒤에 닫는 따옴표등이 올 수 있고, 그 뒤에 공백이 오는 경우를 처리
       // 예: ." 또는 .' 또는 .”
@@ -528,7 +531,10 @@ export function App() {
       const splitRegex = new RegExp(`(${pattern}${quotePattern})\\s+`, 'g')
       const endRegex = new RegExp(`(${pattern}${quotePattern})$`, 'g')
 
-      const newText = fullText.replace(splitRegex, '$1\n').replace(endRegex, '$1\n')
+      let newText = safeText.replace(splitRegex, '$1\n').replace(endRegex, '$1\n')
+
+      // 임시 문자를 다시 마침표로 복원
+      newText = newText.replace(/___DOT___/g, '.')
 
       const newLines = newText
         .split('\n')
@@ -665,11 +671,10 @@ export function App() {
         setOriginalSrtLines(JSON.parse(JSON.stringify(finalSrtLines)))
         setHasTimestampEdits(false)
       } else {
-        // --- STRATEGY UPDATE: Limit chunk sizes to < 2m30s to prevent high-frequency noise artifacts ---
-        // 청크 크기 제한: Gemini TTS 후반부 치찰음/쇳소리 방지 (3분+ 시 고주파 아티팩트 누적)
-        // 최대 2500자, 50줄 중 선행 도달 기준으로 분할 (sampleRate 48kHz 고정으로 고주파 문제 해결됨)
-        // maxEstimatedSeconds를 9999로 설정하여 시간 기반 분할 비활성화 (글자수/줄수만 기준으로 사용)
-        const textChunks = splitTextIntoChunks(fullText, 2500, 50, 9999)
+        // 청크 분할: 예상시간(420초=7분) 기준으로 균등 분할
+        // maxLines=150으로 올려 대화체에서 줄 수가 먼저 걸려 3~4분에 조기 분할되는 현상 방지
+        // maxLength=4000은 안전 상한선으로만 사용
+        const textChunks = splitTextIntoChunks(fullText, 4000, 150, 420)
         const totalChunks = textChunks.length
 
         let mergedAudioBuffer: AudioBuffer | null = null
@@ -761,6 +766,7 @@ export function App() {
               console.log(`[Chunk ${i + 1}] Before trim: ${chunkBuffer.duration.toFixed(2)}s`)
               chunkBuffer = trimTrailingSilence(chunkBuffer, 0.03, 0.3)
               console.log(`[Chunk ${i + 1}] After trim: ${chunkBuffer.duration.toFixed(2)}s`)
+
 
               // Step 3: Direct Script-to-SRT Mapping (No AI transcription)
               const inputLines = chunkText.split('\n').filter(line => line.trim().length > 0)

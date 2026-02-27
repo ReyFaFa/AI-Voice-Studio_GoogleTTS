@@ -222,7 +222,7 @@ export const trimTrailingSilence = (
     const abs = Math.abs(channelData[i])
     if (abs > maxAmplitude) maxAmplitude = abs
   }
-  const dynamicThreshold = Math.max(threshold, maxAmplitude * 0.05)
+  const dynamicThreshold = Math.max(threshold, maxAmplitude * 0.005)
 
   console.log(
     `[Trim Trailing Silence] Dynamic threshold: ${dynamicThreshold.toFixed(4)} (max amplitude: ${maxAmplitude.toFixed(4)})`
@@ -267,6 +267,85 @@ export const trimTrailingSilence = (
   // 슬라이스하여 새 버퍼 생성
   const audioCtx = new (window.AudioContext || (window as any).webkitAudioContext)()
   return sliceAudioBuffer(audioBuffer, 0, trimEndSample / sampleRate, audioCtx)
+}
+
+/**
+ * Gemini TTS 모델의 페이드인(fade-in) 특성을 보정하는 볼륨 레벨링 함수.
+ * 오디오를 짧은 윈도우(500ms)로 분석하여 각 구간의 RMS를 계산하고,
+ * 조용한 시작 부분의 게인을 높여 전체 볼륨을 일관되게 만든다.
+ * @param audioBuffer 원본 오디오 버퍼
+ * @param analysisWindowMs 분석 윈도우 크기 (ms, 기본: 500ms)
+ * @param maxGain 최대 게인 배율 (기본: 4.0 = +12dB, 무음 증폭 방지)
+ * @param silenceThreshold 무음으로 간주할 RMS 임계값 (기본: 0.003)
+ */
+export const levelVolume = (
+  audioBuffer: AudioBuffer,
+  analysisWindowMs: number = 500,
+  maxGain: number = 4.0,
+  silenceThreshold: number = 0.003
+): AudioBuffer => {
+  const sampleRate = audioBuffer.sampleRate
+  const windowSamples = Math.floor((analysisWindowMs / 1000) * sampleRate)
+  const totalSamples = audioBuffer.length
+  const numWindows = Math.ceil(totalSamples / windowSamples)
+  const channelData0 = audioBuffer.getChannelData(0)
+
+  // Step 1: 각 윈도우의 RMS 계산
+  const windowRms: number[] = []
+  for (let w = 0; w < numWindows; w++) {
+    const start = w * windowSamples
+    const end = Math.min(start + windowSamples, totalSamples)
+    let sumSq = 0
+    for (let i = start; i < end; i++) sumSq += channelData0[i] * channelData0[i]
+    windowRms.push(Math.sqrt(sumSq / (end - start)))
+  }
+
+  // Step 2: 기준 RMS = 75th percentile (전체 오디오의 "정상" 볼륨)
+  const nonSilentRms = windowRms.filter(r => r > silenceThreshold)
+  if (nonSilentRms.length === 0) {
+    console.log('[LevelVolume] All silence, skipping')
+    return audioBuffer
+  }
+  const sorted = [...nonSilentRms].sort((a, b) => a - b)
+  const targetRms = sorted[Math.floor(sorted.length * 0.75)]
+
+  // Step 3: 각 윈도우에 필요한 게인 계산
+  const rawGains = windowRms.map(rms => {
+    if (rms < silenceThreshold) return 1.0
+    return Math.min(targetRms / rms, maxGain)
+  })
+
+  // Step 4: 게인 커브를 부드럽게 (인접 3개 윈도우 이동 평균)
+  const smoothedGains = rawGains.map((g, i) => {
+    const prev = rawGains[Math.max(0, i - 1)]
+    const next = rawGains[Math.min(numWindows - 1, i + 1)]
+    return (prev + g + next) / 3
+  })
+
+  const maxBoost = Math.max(...smoothedGains).toFixed(2)
+  console.log(`[LevelVolume] targetRms=${targetRms.toFixed(4)}, maxGain=${maxBoost}x, windows=${numWindows}`)
+
+  // Step 5: 새 버퍼에 게인 적용 (윈도우 경계에서 선형 보간)
+  const outputBuffer = new AudioBuffer({
+    numberOfChannels: audioBuffer.numberOfChannels,
+    length: totalSamples,
+    sampleRate,
+  })
+
+  for (let channel = 0; channel < audioBuffer.numberOfChannels; channel++) {
+    const input = audioBuffer.getChannelData(channel)
+    const output = outputBuffer.getChannelData(channel)
+    for (let i = 0; i < totalSamples; i++) {
+      const w = Math.floor(i / windowSamples)
+      const t = (i % windowSamples) / windowSamples
+      const g1 = smoothedGains[w] ?? 1.0
+      const g2 = smoothedGains[Math.min(w + 1, numWindows - 1)] ?? g1
+      const gain = g1 + (g2 - g1) * t
+      output[i] = Math.max(-1.0, Math.min(1.0, input[i] * gain))
+    }
+  }
+
+  return outputBuffer
 }
 
 /**

@@ -118,28 +118,6 @@ if (storedKey) {
   setApiKey(process.env.API_KEY)
 }
 
-const TONE_LEVEL_MAP: Record<number, { ko: string; en: string }> = {
-  1: {
-    ko: '매우 차분하고 낮은 톤으로 읽으세요.',
-    en: 'Read in a very calm and low tone.',
-  },
-  2: {
-    ko: '차분하고 편안한 톤으로 읽으세요.',
-    en: 'Read in a calm and relaxed tone.',
-  },
-  3: {
-    ko: '자연스럽고 중립적인 톤으로 읽으세요.',
-    en: 'Read in a natural and neutral tone.',
-  },
-  4: {
-    ko: '밝고 활기찬 톤으로 읽으세요.',
-    en: 'Read in a bright and lively tone.',
-  },
-  5: {
-    ko: '매우 밝고 열정적인 톤으로 읽으세요.',
-    en: 'Read in a very bright and enthusiastic tone.',
-  },
-}
 
 interface ChunkInfo {
   chunkIndex: number
@@ -355,42 +333,48 @@ export function msToSrtTime(ms: number): string {
   return `${String(hours).padStart(2, '0')}:${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')},${String(milliseconds).padStart(3, '0')}`
 }
 
-function buildTtsPrompt(
-  text: string,
+// Compact tone descriptors for "Say in a [style] tone:" format
+const TONE_COMPACT: Record<number, string> = {
+  1: 'deep bass, chest-resonant, very low register',
+  2: 'low, calm, weighted low register',
+  3: 'natural mid-range',
+  4: 'slightly elevated, bright and lively',
+  5: 'high, energetic, nasal resonance',
+}
+
+/**
+ * 공식 포맷 (Gemini 권장): `Say in a [style] and [tone] tone: "[text]"`
+ * - instruction과 text를 콜론으로 직접 연결, 줄바꿈 없음
+ * - text를 따옴표로 감쌈 → 모델이 콜론 이후 전체를 읽을 내용으로 인식
+ */
+function buildEmbeddedPrompt(
+  scriptText: string,
   stylePrompt: string | undefined,
   speed: number,
   toneLevel: number,
-  isKorean: boolean,
   chunkInfo?: ChunkInfo
 ): string {
-  const systemInstructions: string[] = []
+  const parts: string[] = []
 
-  const tone = TONE_LEVEL_MAP[toneLevel] || TONE_LEVEL_MAP[3]
-  systemInstructions.push(isKorean ? tone.ko : tone.en)
-
-  if (speed !== 1.0) {
-    systemInstructions.push(isKorean ? `속도: ${speed}x` : `Speed: ${speed}x`)
+  // Style prompt: 첫 문장만 추출 (compact하게)
+  if (stylePrompt?.trim()) {
+    const firstSentence = stylePrompt.trim().split(/[.\n]/)[0].trim()
+    if (firstSentence) parts.push(firstSentence)
   }
 
-  if (chunkInfo && chunkInfo.chunkIndex > 0) {
-    systemInstructions.push(
-      isKorean
-        ? '[중요: 긴 오디오 트랙의 중간 청크(분할본)입니다]\n- 앞서 읽던 화자의 목소리 톤, 피치(Pitch), 그리고 감정선을 100% 동일하게 유지하세요.\n- 새로운 문단이 시작되는 것처럼 에너지를 높이거나 라디오 오프닝 느낌으로 리셋하지 마세요.\n- 이전 문장의 끝에서부터 끊김 없이 이어지는 것처럼 자연스럽고 차분하게 시작하세요.\n- 목소리의 배음(Overtone)이 튀거나 치찰음(쇳소리)이 섞이지 않도록 발성에 주의하세요.'
-        : '[IMPORTANT: This is a continuation of a longer audio track]\n- Maintain 100% the exact same voice pitch, tone, and emotional line as the previous segment.\n- DO NOT start with high energy or a "new opening" voice as if starting fresh.\n- Begin naturally and smoothly, as if continuing directly from the previous sentence.\n- Ensure there are no high-frequency artifacts or sudden changes in resonance.'
-    )
-  }
+  // Tone
+  parts.push(TONE_COMPACT[toneLevel] || TONE_COMPACT[3])
 
-  const previousContext = chunkInfo?.previousText
-    ? `[이전 문맥 (참고용, 읽지 말 것)]\n${chunkInfo.previousText}\n\n`
-    : ''
+  // Speed
+  if (speed !== 1.0) parts.push(`${speed}x speed`)
 
-  const userPromptSection = stylePrompt?.trim() ? `${stylePrompt.trim()}\n\n` : ''
+  // Continuation consistency
+  if (chunkInfo && chunkInfo.chunkIndex > 0) parts.push('consistent tone throughout')
 
-  return `${userPromptSection}[System]
-${systemInstructions.join('\n')}
-
-${previousContext}[Transcript]
-${text}`
+  const stylePhrase = parts.join(', ')
+  // \n을 공백으로 치환: 줄바꿈이 있으면 모델이 첫 줄만 읽고 멈추는 현상 방지
+  const sanitizedText = scriptText.replace(/\n/g, ' ').trim()
+  return `Say in a ${stylePhrase} tone. Narrate the FULL script below from start to finish without skipping: ${sanitizedText}`
 }
 
 async function _generateAudio(
@@ -425,18 +409,6 @@ async function _generateAudio(
       speechConfig: isNativeAudio ? undefined : speechConfig,
     }
 
-    // Construct the prompt with instructions for steerability
-    const isKorean = /[가-힣]/.test(prompt)
-
-    const finalPrompt = buildTtsPrompt(
-      processedPrompt,
-      stylePrompt,
-      speed,
-      toneLevel,
-      isKorean,
-      chunkInfo
-    )
-
     if (!generalAI || !liveAI) {
       throw new Error('API 키가 설정되지 않았습니다.')
     }
@@ -460,20 +432,22 @@ async function _generateAudio(
     }
 
     // --- CASE 2: Standard REST API (generateContent) for Flash/Pro TTS ---
-    // Use unified SDK style: generalAI.models.generateContent
-    console.log(`[Gemini API Request] Model: ${modelName}, Prompt Length: ${finalPrompt.length}`)
+    // Style/tone instructions cannot be passed without side effects on this TTS model:
+    // Official format: "Say in a [style] voice: [text]"
+    // Colon directly connects instruction to script — no line break — model reads entire content.
+    const fullContent = buildEmbeddedPrompt(processedPrompt, stylePrompt, speed, toneLevel, chunkInfo)
+    console.log(`[Gemini API Request] ====== FULL PROMPT ======\n${fullContent}\n========================`)
+    console.log(`[Gemini API Request] Model: ${modelName}, Total prompt length: ${fullContent.length} chars`)
 
     const result = await (generalAI as any).models.generateContent({
       model: modelName,
-      contents: [{ role: 'user', parts: [{ text: finalPrompt }] }],
+      contents: [{ role: 'user', parts: [{ text: fullContent }] }],
       config: {
         abortSignal: signal,
         responseModalities: ['AUDIO'],
         speechConfig: isNativeAudio ? undefined : speechConfig,
-        generationConfig: {
-          temperature: 0.2, // Balance between voice consistency and emotional richness
-          maxOutputTokens: 8192, // 충분히 큰 값을 주어 MAX_TOKENS로 중간에 잘림 방지
-        },
+        // temperature: 0.2, // 무음 원인 가능성으로 비활성화
+        maxOutputTokens: 8192,
       },
       safetySettings: [
         { category: 'HARM_CATEGORY_HARASSMENT' as any, threshold: 'BLOCK_NONE' as any },

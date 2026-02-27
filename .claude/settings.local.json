@@ -20,7 +20,10 @@
       "Bash(git commit -m \"$\\(cat <<''EOF''\nfix: Make stop button immediately halt TTS chunk generation\n\n- Add abort signal check at loop start for immediate cancellation\n- Replace sleep\\(5000\\) with abort-aware delay that responds to stop button\n- Propagate AbortError immediately instead of continuing to next chunk\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
       "Bash(git commit -m \"$\\(cat <<''EOF''\nfix: Replace String.fromCharCode.apply with safe loop in blobToBase64\n\nCo-Authored-By: Claude Opus 4.6 <noreply@anthropic.com>\nEOF\n\\)\")",
       "Bash(git commit:*)",
-      "Bash(npm run build:*)"
+      "Bash(npm run build:*)",
+      "mcp__context7__resolve-library-id",
+      "Bash(ffprobe -v quiet -print_format json -show_streams -show_format \"d:/01_Antigravity/12_AI-Voice-Studio/개발문서/한편 이 고을을 쥐락펴락.wav\")",
+      "Bash(ffmpeg -i \"d:/01_Antigravity/12_AI-Voice-Studio/개발문서/한편 이 고을을 쥐락펴락.wav\" -af \"astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level:key=lavfi.astats.Overall.Peak_level:key=lavfi.astats.Overall.Flat_factor\" -f null -)"
     ]
   }
 }
