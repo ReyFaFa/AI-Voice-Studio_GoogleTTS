@@ -671,10 +671,10 @@ export function App() {
         setOriginalSrtLines(JSON.parse(JSON.stringify(finalSrtLines)))
         setHasTimestampEdits(false)
       } else {
-        // 청크 분할: 예상시간(420초=7분) 기준으로 균등 분할
-        // maxLines=150으로 올려 대화체에서 줄 수가 먼저 걸려 3~4분에 조기 분할되는 현상 방지
-        // maxLength=4000은 안전 상한선으로만 사용
-        const textChunks = splitTextIntoChunks(fullText, 4000, 150, 420)
+        // 청크 분할: 예상시간 기준으로 균등 분할
+        // maxLines를 조절하여 대화체에서 줄 수가 먼저 걸려 분할되는 현상 억제
+        // maxLength는 안전 상한선으로만 사용
+        const textChunks = splitTextIntoChunks(fullText, 2000, 75, 300)
         const totalChunks = textChunks.length
 
         let mergedAudioBuffer: AudioBuffer | null = null
@@ -766,7 +766,6 @@ export function App() {
               console.log(`[Chunk ${i + 1}] Before trim: ${chunkBuffer.duration.toFixed(2)}s`)
               chunkBuffer = trimTrailingSilence(chunkBuffer, 0.03, 0.3)
               console.log(`[Chunk ${i + 1}] After trim: ${chunkBuffer.duration.toFixed(2)}s`)
-
 
               // Step 3: Direct Script-to-SRT Mapping (No AI transcription)
               const inputLines = chunkText.split('\n').filter(line => line.trim().length > 0)

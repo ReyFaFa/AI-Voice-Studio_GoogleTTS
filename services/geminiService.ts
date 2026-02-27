@@ -118,7 +118,6 @@ if (storedKey) {
   setApiKey(process.env.API_KEY)
 }
 
-
 interface ChunkInfo {
   chunkIndex: number
   totalChunks: number
@@ -354,27 +353,25 @@ function buildEmbeddedPrompt(
   toneLevel: number,
   chunkInfo?: ChunkInfo
 ): string {
-  const parts: string[] = []
+  // Google 공식 Prompting Guide 구조
+  // https://ai.google.dev/gemini-api/docs/speech-generation#prompting-structure
 
-  // Style prompt: 첫 문장만 추출 (compact하게)
-  if (stylePrompt?.trim()) {
-    const firstSentence = stylePrompt.trim().split(/[.\n]/)[0].trim()
-    if (firstSentence) parts.push(firstSentence)
-  }
+  const styleDesc = stylePrompt?.trim() || 'Professional narrator'
+  const toneDesc = TONE_COMPACT[toneLevel] || TONE_COMPACT[3]
+  const pacingDesc = getPacingPrompt(speed)
+  const continuityNote =
+    chunkInfo && chunkInfo.chunkIndex > 0
+      ? '\nIMPORTANT: This is a continuation. Maintain the exact same voice, tone, and energy as the previous section.'
+      : ''
 
-  // Tone
-  parts.push(TONE_COMPACT[toneLevel] || TONE_COMPACT[3])
+  return `### DIRECTOR'S NOTES
+Style: ${styleDesc}
+Tone: ${toneDesc}
+${pacingDesc}
+Take natural pauses between sentences. Let each sentence breathe.${continuityNote}
 
-  // Speed
-  if (speed !== 1.0) parts.push(`${speed}x speed`)
-
-  // Continuation consistency
-  if (chunkInfo && chunkInfo.chunkIndex > 0) parts.push('consistent tone throughout')
-
-  const stylePhrase = parts.join(', ')
-  // \n을 공백으로 치환: 줄바꿈이 있으면 모델이 첫 줄만 읽고 멈추는 현상 방지
-  const sanitizedText = scriptText.replace(/\n/g, ' ').trim()
-  return `Say in a ${stylePhrase} tone. Narrate the FULL script below from start to finish without skipping: ${sanitizedText}`
+#### TRANSCRIPT
+${scriptText}`
 }
 
 async function _generateAudio(
@@ -435,9 +432,19 @@ async function _generateAudio(
     // Style/tone instructions cannot be passed without side effects on this TTS model:
     // Official format: "Say in a [style] voice: [text]"
     // Colon directly connects instruction to script — no line break — model reads entire content.
-    const fullContent = buildEmbeddedPrompt(processedPrompt, stylePrompt, speed, toneLevel, chunkInfo)
-    console.log(`[Gemini API Request] ====== FULL PROMPT ======\n${fullContent}\n========================`)
-    console.log(`[Gemini API Request] Model: ${modelName}, Total prompt length: ${fullContent.length} chars`)
+    const fullContent = buildEmbeddedPrompt(
+      processedPrompt,
+      stylePrompt,
+      speed,
+      toneLevel,
+      chunkInfo
+    )
+    console.log(
+      `[Gemini API Request] ====== FULL PROMPT ======\n${fullContent}\n========================`
+    )
+    console.log(
+      `[Gemini API Request] Model: ${modelName}, Total prompt length: ${fullContent.length} chars`
+    )
 
     const result = await (generalAI as any).models.generateContent({
       model: modelName,
@@ -447,7 +454,7 @@ async function _generateAudio(
         responseModalities: ['AUDIO'],
         speechConfig: isNativeAudio ? undefined : speechConfig,
         // temperature: 0.2, // 무음 원인 가능성으로 비활성화
-        maxOutputTokens: 8192,
+        maxOutputTokens: 16384,
       },
       safetySettings: [
         { category: 'HARM_CATEGORY_HARASSMENT' as any, threshold: 'BLOCK_NONE' as any },
@@ -535,7 +542,70 @@ async function _generateAudio(
       )
     }
 
-    return data
+    // PCM 오디오의 볼륨을 정규화 (24kHz, 16bit, mono)
+    // - 전체 RMS 기준으로 과도하게 큰 구간을 억제
+    // - threshold: RMS 대비 이 배수를 넘으면 압축 (기본 2.0)
+    // - ratio: 압축 비율 (기본 0.4 = 초과분의 40%만 허용)
+    function normalizeAudioVolume(
+      pcmBuffer: ArrayBuffer,
+      threshold: number = 2.0,
+      ratio: number = 0.4
+    ): ArrayBuffer {
+      const samples = new Int16Array(pcmBuffer)
+      if (samples.length === 0) return pcmBuffer
+
+      // 1. 전체 RMS 계산
+      let sumSquares = 0
+      for (let i = 0; i < samples.length; i++) {
+        sumSquares += samples[i] * samples[i]
+      }
+      const rms = Math.sqrt(sumSquares / samples.length)
+      const limit = rms * threshold
+
+      if (rms === 0) return pcmBuffer
+
+      // 2. 윈도우 단위로 볼륨 압축 (50ms 윈도우)
+      const sampleRate = 24000
+      const windowSize = Math.floor(sampleRate * 0.05) // 50ms
+      const output = new Int16Array(samples.length)
+
+      for (let start = 0; start < samples.length; start += windowSize) {
+        const end = Math.min(start + windowSize, samples.length)
+
+        // 윈도우 RMS 계산
+        let windowSum = 0
+        for (let i = start; i < end; i++) {
+          windowSum += samples[i] * samples[i]
+        }
+        const windowRms = Math.sqrt(windowSum / (end - start))
+
+        // 임계값 초과 시 압축
+        let gain = 1.0
+        if (windowRms > limit) {
+          const excess = windowRms - limit
+          const compressed = limit + excess * ratio
+          gain = compressed / windowRms
+        }
+
+        // 적용
+        for (let i = start; i < end; i++) {
+          const newVal = Math.round(samples[i] * gain)
+          output[i] = Math.max(-32768, Math.min(32767, newVal))
+        }
+      }
+
+      console.log(
+        `[Audio Normalize] RMS: ${rms.toFixed(0)}, ` +
+          `Limit: ${limit.toFixed(0)}, ` +
+          `Processed ${samples.length} samples`
+      )
+
+      return output.buffer
+    }
+
+    const rawBuffer = base64ToArrayBuffer(data)
+    const normalized = normalizeAudioVolume(rawBuffer)
+    return uint8ArrayToBase64(new Uint8Array(normalized))
   } catch (error) {
     if (error instanceof Error && error.name === 'AbortError') {
       throw error
