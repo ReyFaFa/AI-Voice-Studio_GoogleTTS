@@ -129,19 +129,19 @@ interface ChunkInfo {
  */
 function getPacingPrompt(speed: number): string {
   if (speed <= 0.5) {
-    return 'Pacing: Extremely slow, almost meditative. Long pauses between phrases. Each word deliberate and weighted.'
+    return 'Pacing: "Still Water" — extremely slow and meditative. Long pauses between sentences. Each word exists on its own.'
   } else if (speed <= 0.7) {
-    return 'Pacing: Slow and relaxed. Take your time, let the words breathe. About 2 words per second.'
+    return 'Pacing: "Settling Dust" — slow and deliberate. Each sentence lands fully and settles before the next begins. Pause longer after scene transitions.'
   } else if (speed <= 0.9) {
-    return 'Pacing: Unhurried and gentle. Speak deliberately, no rushing. About 3 words per second.'
+    return 'Pacing: "Evening Walk" — unhurried and gentle. Natural breathing room between sentences. No rushing.'
   } else if (speed <= 1.1) {
-    return 'Pacing: Natural conversational pace.'
+    return 'Pacing: "Warm Conversation" — natural conversational pace. Comfortable rhythm with organic pauses.'
   } else if (speed <= 1.3) {
-    return 'Pacing: Slightly energetic pace, keeping momentum without rushing.'
+    return 'Pacing: "Morning Stride" — slightly energetic. Forward momentum while maintaining clarity.'
   } else if (speed <= 1.6) {
-    return 'Pacing: Quick and lively delivery, but still clear and articulate.'
+    return 'Pacing: "Quick Current" — brisk and lively. Clear articulation at speed. No mumbling.'
   } else {
-    return 'Pacing: Rapid-fire delivery. Speak as fast as possible while maintaining clarity.'
+    return 'Pacing: "Lightning Round" — rapid delivery. Every syllable still distinct and precise.'
   }
 }
 
@@ -334,11 +334,11 @@ export function msToSrtTime(ms: number): string {
 
 // Compact tone descriptors for "Say in a [style] tone:" format
 const TONE_COMPACT: Record<number, string> = {
-  1: 'deep bass, chest-resonant, very low register',
-  2: 'low, calm, weighted low register',
-  3: 'natural mid-range',
-  4: 'slightly elevated, bright and lively',
-  5: 'high, energetic, nasal resonance',
+  1: 'Very low chest voice, heavy and grounded. Speak from deep within, as if each word carries weight.',
+  2: 'Low, calm register with gentle warmth. Steady and unhurried, like a quiet evening conversation.',
+  3: 'Natural mid-range voice. Balanced and clear, comfortable for extended listening.',
+  4: 'Slightly elevated register with gentle brightness. Warm energy without losing composure.',
+  5: 'High, light register with crisp energy. Animated and engaging, but always articulate.',
 }
 
 /**
@@ -364,11 +364,14 @@ function buildEmbeddedPrompt(
       ? '\nIMPORTANT: This is a continuation. Maintain the exact same voice, tone, and energy as the previous section.'
       : ''
 
-  return `### DIRECTOR'S NOTES
-Style: ${styleDesc}
+  const SAMPLE_CONTEXT = `### SAMPLE CONTEXT
+전기수는 조선시대 저잣거리에서 이야기를 들려주던 전문 이야기꾼이다. 깊고 차분한 목소리로 듣는 이의 마음을 사로잡는다.`
+
+  return `${styleDesc}
 Tone: ${toneDesc}
-${pacingDesc}
-Take natural pauses between sentences. Let each sentence breathe.${continuityNote}
+${pacingDesc}${continuityNote}
+
+${SAMPLE_CONTEXT}
 
 #### TRANSCRIPT
 ${scriptText}`
