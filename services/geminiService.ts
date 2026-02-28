@@ -146,21 +146,21 @@ function getPacingPrompt(speed: number): string {
 }
 
 /**
- * 톤 레벨에 따른 상세한 Tone 프롬프트 반환
+ * 톤 레벨에 따른 상세한 Tone 프롬프트 반환 (백업 - 목소리 특성 포함 버전)
  */
-export function getTonePrompt(toneLevel: number): string {
-  if (toneLevel <= 1) {
-    return 'Tone: Very low and hushed, almost a whisper. Pitch around 140-180Hz. Minimal energy, deeply subdued.'
-  } else if (toneLevel <= 2) {
-    return 'Tone: Low and soft, like a quiet late-night radio whisper. Pitch around 160-200Hz. Soft and subdued energy.'
-  } else if (toneLevel <= 3) {
-    return 'Tone: Warm and gentle, like telling a bedtime story. Pitch around 180-220Hz. Calm, soothing energy.'
-  } else if (toneLevel <= 4) {
-    return 'Tone: Warm and clear, comfortable storytelling. Pitch around 200-240Hz. Gentle but present energy.'
-  } else {
-    return 'Tone: Friendly and inviting, daytime radio feel. Pitch around 220-260Hz. Warm and engaged energy.'
-  }
-}
+// export function getTonePrompt(toneLevel: number): string {
+//   if (toneLevel <= 1) {
+//     return 'Tone: Very low and hushed, almost a whisper. Pitch around 140-180Hz. Minimal energy, deeply subdued.'
+//   } else if (toneLevel <= 2) {
+//     return 'Tone: Low and soft, like a quiet late-night radio whisper. Pitch around 160-200Hz. Soft and subdued energy.'
+//   } else if (toneLevel <= 3) {
+//     return 'Tone: Warm and gentle, like telling a bedtime story. Pitch around 180-220Hz. Calm, soothing energy.'
+//   } else if (toneLevel <= 4) {
+//     return 'Tone: Warm and clear, comfortable storytelling. Pitch around 200-240Hz. Gentle but present energy.'
+//   } else {
+//     return 'Tone: Friendly and inviting, daytime radio feel. Pitch around 220-260Hz. Warm and engaged energy.'
+//   }
+// }
 
 // Models are now dynamic, but we keep this as a fallback/reference or for Flash.
 // Pro model will be passed dynamically.
@@ -334,11 +334,11 @@ export function msToSrtTime(ms: number): string {
 
 // Compact tone descriptors for "Say in a [style] tone:" format
 const TONE_COMPACT: Record<number, string> = {
-  1: 'Very low chest voice, heavy and grounded. Speak from deep within, as if each word carries weight.',
-  2: 'Low, calm register with gentle warmth. Steady and unhurried, like a quiet evening conversation.',
-  3: 'Natural mid-range voice. Balanced and clear, comfortable for extended listening.',
-  4: 'Slightly elevated register with gentle brightness. Warm energy without losing composure.',
-  5: 'High, light register with crisp energy. Animated and engaging, but always articulate.',
+  1: 'Read in a very low register. Slow and heavy.',
+  2: 'Read in a low, calm register. Steady and unhurried.',
+  3: 'Read in a natural mid-range register. Balanced and clear.',
+  4: 'Read in a slightly elevated register. Gentle forward energy.',
+  5: 'Read in a high register. Light and crisp pace.',
 }
 
 /**
@@ -453,8 +453,9 @@ async function _generateAudio(
       chunkInfo
     )
     console.log(
-      `[Gemini API Request] Model: ${modelName}, Total prompt length: ${fullContent.length} chars (Prompt loaded successfully)`
+      `[Gemini API Request] Model: ${modelName}, Total prompt length: ${fullContent.length} chars`
     )
+    console.log(`[Gemini API Request] ▼ Full Prompt ▼\n${fullContent}\n▲ End of Prompt ▲`)
 
     const result = await (generalAI as any).models.generateContent({
       model: modelName,
