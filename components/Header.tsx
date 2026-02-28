@@ -19,13 +19,15 @@ export async function downloadChunksAsZip(
 
   for (const chunk of chunks) {
     // WAV 파일 생성
-    const wavBlob = encodeAudioBufferToWavBlob(chunk.buffer)
-    const wavFilename = `${String(chunk.index + 1).padStart(2, '0')}-chunk.wav`
-    zip.file(wavFilename, wavBlob)
+    if (chunk.buffer && !chunk.isFailed) {
+      const wavBlob = encodeAudioBufferToWavBlob(chunk.buffer)
+      const wavFilename = `${String(chunk.index + 1).padStart(2, '0')}-chunk.wav`
+      zip.file(wavFilename, wavBlob)
+    }
 
     // 대본 텍스트 파일
     const txtFilename = `${String(chunk.index + 1).padStart(2, '0')}-script.txt`
-    zip.file(txtFilename, chunk.text)
+    zip.file(txtFilename, chunk.isFailed ? `[FAILED] ${chunk.text}` : chunk.text)
   }
 
   const zipBlob = await zip.generateAsync({ type: 'blob' })
@@ -323,7 +325,9 @@ export const levelVolume = (
   })
 
   const maxBoost = Math.max(...smoothedGains).toFixed(2)
-  console.log(`[LevelVolume] targetRms=${targetRms.toFixed(4)}, maxGain=${maxBoost}x, windows=${numWindows}`)
+  console.log(
+    `[LevelVolume] targetRms=${targetRms.toFixed(4)}, maxGain=${maxBoost}x, windows=${numWindows}`
+  )
 
   // Step 5: 새 버퍼에 게인 적용 (윈도우 경계에서 선형 보간)
   const outputBuffer = new AudioBuffer({
@@ -412,7 +416,8 @@ export const analyzeScript = (script: string) => {
     .split(/\s+/)
     .filter(Boolean)
   const uniqueWordCount = new Set(normalizedWords).size
-  const readTime = charCountNoSpaces > 0 ? Math.round(charCountNoSpaces / (400 / 60)) : 0 // 400 chars/min
+  // 공백 포함 24,000자 = 60분 (1분당 400자 기준)으로 계산
+  const readTime = charCount > 0 ? Math.round(charCount / (400 / 60)) : 0
 
   let hangul = 0,
     english = 0,

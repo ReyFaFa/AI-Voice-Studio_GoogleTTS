@@ -1,0 +1,95 @@
+# Technical Report: Gemini 2.5 Pro TTS Quality Issues
+
+# (Technical Report: 제미나이 2.5 Pro TTS 품질 결함 보고서)
+
+---
+
+## Part 1. English Version (For Google Support)
+
+# Technical Report: Quality Issues and Resource Inefficiency in Gemini 2.5 Pro TTS
+
+**Date:** February 28, 2026  
+**Project ID:** gemini-467021  
+**Target Model:** gemini-2.5-pro-preview-tts
+
+### 1. Executive Summary
+
+This report documents significant quality defects in the Gemini 2.5 Pro TTS model observed during the production of high-quality audiobook content. These defects resulted in a **14x increase in token consumption** compared to normal operations due to recursive retries and manual intervention. The primary issues include high-frequency artifacts, excessive silent padding, and incomplete audio generation (premature termination).
+
+### 2. Technical Issue Analysis
+
+#### A. High-Frequency Artifacts (Squeaking/Metallic Noise)
+
+- **Symptom:** Long-form audio generation often contains high-frequency "chirping" or metallic artifacts that degrade listener immersion.
+- **Analysis:** Discrepancies between the model's internal sampling behavior and standard AudioContext configurations (44.1kHz vs 48kHz) exacerbated these artifacts.
+- **Workaround:** We had to normalize the entire pipeline to 48kHz and implement custom PCM volume normalization to prevent clipping-induced noise.
+
+#### B. Excessive Silent Padding (1~2 Minutes)
+
+- **Symptom:** The model frequently appends 60 to 120 seconds of silence at the end of a generated chunk, despite the text being fully read.
+- **Impact:** This silence counts towards output token duration and significantly delays the concatenation process, leading to "RESOURCE_EXHAUSTED" (429) errors during large-scale tasks.
+- **Workaround:** Implemented an aggressive `trimTrailingSilence` algorithm with a dynamic RMS threshold to strip this unnecessary overhead manually.
+
+#### C. Incomplete Audio Generation (Premature Cutoff)
+
+- **Symptom:** The model returns a "success" status but the generated audio only covers the first 10-30% of the input text.
+- **Data Proof:** In a 21-chunk task, several chunks produced only 11s or 50s of audio for text that requires 150s+ of speech.
+- **Workaround:** Developed a client-side validation logic that calculates "Minimum Expected Duration" (char_count \* 0.1s) and forces an automatic retry if the result is less than 40% of the expectation.
+
+### 3. Economic Impact & Resource Waste
+
+- **Normal Efficiency:** ~3.9M tokens should produce approximately 40-50 hours of audio.
+- **Actual Result:** Due to the issues above, 3,859,971 tokens were consumed to produce only **3 hours** of usable content.
+- **Retry Rate:** Approximately 90% of requests in February required at least 3-5 retries to achieve acceptable quality.
+
+### 4. Conclusion
+
+The current preview state of the Gemini 2.5 Pro TTS model exhibits instability that makes commercial-grade production prohibitively expensive without manual correction. We request a credit adjustment of **111,809 KRW** to compensate for tokens wasted on defective outputs and a re-evaluation of the initial $300 credit to support further ecosystem development.
+
+---
+
+## Part 2. 한글 번역본 (Part 2. Korean Translation)
+
+# 기술 보고서: Gemini 2.5 Pro TTS의 품질 결함 및 리소스 효율성 저하 문제
+
+**일자:** 2026년 2월 28일  
+**프로젝트 ID:** gemini-467021  
+**대상 모델:** gemini-2.5-pro-preview-tts
+
+### 1. 요약
+
+본 보고서는 고품질 오디오북 콘텐츠 제작 과정에서 발견된 Gemini 2.5 Pro TTS 모델의 심각한 품질 결함을 문서화한 것입니다. 이러한 결함으로 인해 반복적인 재시도와 수동 개입이 발생하였으며, 결과적으로 **정상 운영 대비 출력 토큰 소모량이 14배 증가**하는 결과를 초래했습니다. 주요 문제는 고주파 노이즈, 과도한 무음 패딩, 오디오 생성 미완료(조기 종료) 현상입니다.
+
+### 2. 기술적 문제 분석
+
+#### A. 고주파 아티팩트 (삐걱거리는 소리/금속성 노이즈)
+
+- **증상:** 장문 오디오 생성 시 청취자의 몰입을 방해하는 고주파 "짹짹" 소리나 금속성 노이즈가 빈번하게 포함됨.
+- **분석:** 모델 내부의 샘플링 동작과 표준 AudioContext 설정(44.1kHz vs 48kHz) 간의 불일치가 이러한 현상을 심화시킴.
+- **임시 조치:** 전체 파이프라인을 48kHz로 표준화하고, 클리핑으로 인한 노이즈를 방지하기 위해 커스텀 PCM 볼륨 정규화(Normalization)를 구현함.
+
+#### B. 과도한 무음 패딩 (1~2분)
+
+- **증상:** 텍스트를 모두 읽었음에도 불구하고, 생성된 청크의 끝에 60~120초가량의 무음이 빈번하게 추가됨.
+- **영향:** 이 무음 구간이 출력 토큰 길이에 포함되어 비용을 발생시키며, 병합 과정을 지연시켜 대규모 작업 시 "RESOURCE_EXHAUSTED" (429) 오류를 유발함.
+- **임시 조치:** 동적 RMS 임계값을 사용하는 공격적인 `trimTrailingSilence` 알고리즘을 구현하여 이러한 불필요한 오버헤드를 수동으로 제거함.
+
+#### C. 오디오 생성 미완료 (조기 절단)
+
+- **증상:** 모델이 "성공" 상태를 반환하지만, 생성된 오디오가 입력 텍스트의 10~30% 정도만 포함함.
+- **데이터 증거:** 21개 청크 작업 중, 150초 이상의 음성이 필요한 텍스트에 대해 11초 또는 50초 정도의 오디오만 생성된 사례가 다수 발견됨.
+- **임시 조치:** 글자 수 기반 "최소 예상 시간"(글자 수 \* 0.1s)을 계산하고, 결과물이 예상치의 40% 미만일 경우 자동으로 재시도를 강제하는 클라이언트 측 검증 로직을 개발함.
+
+### 3. 경제적 영향 및 리소스 낭비
+
+- **정상 효율:** 약 390만 개의 토큰은 약 40~50시간의 오디오를 생성해야 함.
+- **실제 결과:** 위 문제들로 인해 3,859,971개의 토큰이 소모되었으나, 실제 사용 가능한 콘텐츠는 **3시간** 분량에 불과함.
+- **재시도율:** 2월 한 달간 생성 요청의 약 90%가 상업적 품질을 유지하기 위해 최소 3~5회의 재시도를 필요로 함.
+
+### 4. 결론
+
+현재 프리뷰 상태인 Gemini 2.5 Pro TTS 모델은 수동 보정 없이는 고품질 콘텐츠 제작 비용을 비정상적으로 높이는 불안정성을 보이고 있습니다. 결함 있는 출력물에 낭비된 토큰에 대한 보상으로 **111,809원** 상당의 크레딧 조정을 요청하며, 향후 생태계 발전을 지원하기 위해 초기 $300 크레딧의 재발급 검토를 요청합니다.
+
+---
+
+_Reported by the developer of the AI Voice Studio (Antigravity Integration)._

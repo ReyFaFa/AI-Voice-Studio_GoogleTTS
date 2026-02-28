@@ -374,6 +374,16 @@ Take natural pauses between sentences. Let each sentence breathe.${continuityNot
 ${scriptText}`
 }
 
+/**
+ * 탭 간 TTS 동시 생성 시 API Rate Limit(Thundering Herd)을 방지하기 위한 전역 락
+ */
+const executeWithLock = <T>(lockName: string, task: () => Promise<T>): Promise<T> => {
+  if (typeof navigator !== 'undefined' && navigator.locks) {
+    return navigator.locks.request(lockName, task)
+  }
+  return task() // fallback for environments without Web Locks API
+}
+
 async function _generateAudio(
   prompt: string,
   modelName: string,
@@ -440,10 +450,7 @@ async function _generateAudio(
       chunkInfo
     )
     console.log(
-      `[Gemini API Request] ====== FULL PROMPT ======\n${fullContent}\n========================`
-    )
-    console.log(
-      `[Gemini API Request] Model: ${modelName}, Total prompt length: ${fullContent.length} chars`
+      `[Gemini API Request] Model: ${modelName}, Total prompt length: ${fullContent.length} chars (Prompt loaded successfully)`
     )
 
     const result = await (generalAI as any).models.generateContent({
@@ -615,6 +622,9 @@ async function _generateAudio(
   }
 }
 
+// ✅ 마지막으로 성공한 API 키를 기억하여 다음 청크 생성 시 우선적으로 사용 (Sticky API Key 전략)
+let lastSuccessfulKey: string | null = null
+
 export const generateSingleSpeakerAudio = async (
   prompt: string,
   voiceName: string,
@@ -637,12 +647,32 @@ export const generateSingleSpeakerAudio = async (
   }
 
   const validTtsKeys = ttsApiKeys.filter(k => k.trim() !== '')
-  const keysToTry =
+  let originalKeysToTry =
     validTtsKeys.length > 0 && fallbackApiKey
       ? [...validTtsKeys, fallbackApiKey]
       : fallbackApiKey
         ? [fallbackApiKey]
         : validTtsKeys
+
+  let keysToTry = [...originalKeysToTry]
+
+  // ✅ 병렬 처리 최적화: 탭마다 서로 다른 키를 먼저 시도하도록 섞기
+  // 단, 마지막으로 성공한 키가 있다면 그것을 최우선으로 함
+  if (lastSuccessfulKey && keysToTry.includes(lastSuccessfulKey)) {
+    const others = keysToTry.filter(k => k !== lastSuccessfulKey)
+    // 나머지 키들을 섞어줌
+    for (let i = others.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1))
+      ;[others[i], others[j]] = [others[j], others[i]]
+    }
+    keysToTry = [lastSuccessfulKey, ...others]
+  } else {
+    // 성공한 키가 없으면 전체를 무작위로 섞음
+    for (let i = keysToTry.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1))
+      ;[keysToTry[i], keysToTry[j]] = [keysToTry[j], keysToTry[i]]
+    }
+  }
 
   if (keysToTry.length === 0) {
     // API 키 목록이 전달되지 않은 경우 (기존 호환성)
@@ -686,6 +716,8 @@ export const generateSingleSpeakerAudio = async (
       )
 
       if (keysToTry.length > 1) {
+        // 성공 시 성공한 키를 기억
+        lastSuccessfulKey = currentKey
         console.log(`[Single TTS Fallback] ✅ ${keyType} API 키로 성공!`)
       }
       setApiKey(originalApiKey)
@@ -704,8 +736,11 @@ export const generateSingleSpeakerAudio = async (
       }
 
       if (i < keysToTry.length - 1) {
-        if (keysToTry.length > 1)
-          console.log(`[Single TTS Fallback] 🔄 Rate Limit 감지, 다음 API 키로 전환...`)
+        if (keysToTry.length > 1) {
+          console.log(`[Single TTS Fallback] 🔄 Rate Limit 감지, 다음 API 키로 전환 전 대기...`)
+        }
+        // Thundering herd 방지를 위해 약간의 딜레이 추가 (해당 락 안에서 대기하지 않고 전환 시에만)
+        await new Promise(resolve => setTimeout(resolve, 1000 + Math.random() * 500))
         continue
       }
     }

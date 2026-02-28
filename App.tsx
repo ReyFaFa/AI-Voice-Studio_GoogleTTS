@@ -205,11 +205,22 @@ export function App() {
     return localStorage.getItem('gemini_api_key') || ''
   })
 
-  // TTS 전용 API 키 배열 (우선순위 순)
   const [ttsApiKeys, setTtsApiKeys] = useState<TtsApiKey[]>(() => {
     const saved = localStorage.getItem('tts_api_keys')
     return saved ? JSON.parse(saved) : []
   })
+
+  // ✅ 실시간 API 키 반영을 위한 Ref
+  const ttsApiKeysRef = useRef<TtsApiKey[]>(ttsApiKeys)
+  const userApiKeyRef = useRef<string>(userApiKey)
+
+  useEffect(() => {
+    ttsApiKeysRef.current = ttsApiKeys
+  }, [ttsApiKeys])
+
+  useEffect(() => {
+    userApiKeyRef.current = userApiKey
+  }, [userApiKey])
 
   const abortControllerRef = useRef<AbortController | null>(null)
 
@@ -672,9 +683,8 @@ export function App() {
         setHasTimestampEdits(false)
       } else {
         // 청크 분할: 예상시간 기준으로 균등 분할
-        // maxLines를 조절하여 대화체에서 줄 수가 먼저 걸려 분할되는 현상 억제
-        // maxLength는 안전 상한선으로만 사용
-        const textChunks = splitTextIntoChunks(fullText, 2000, 75, 300)
+        // 고주파음 방지를 위해 1200자 50줄 상한으로 롤백
+        const textChunks = splitTextIntoChunks(fullText, 1200, 50, 200)
         const totalChunks = textChunks.length
 
         let mergedAudioBuffer: AudioBuffer | null = null
@@ -764,13 +774,48 @@ export function App() {
 
               // ✅ 청크 끝 무음 제거 (Gemini API가 추가하는 패딩 제거)
               console.log(`[Chunk ${i + 1}] Before trim: ${chunkBuffer.duration.toFixed(2)}s`)
-              chunkBuffer = trimTrailingSilence(chunkBuffer, 0.03, 0.3)
+              // 임계값을 0.06으로 높이고, 최소 무음 길이를 0.15s로 줄여 더 공격적으로 제거
+              chunkBuffer = trimTrailingSilence(chunkBuffer, 0.06, 0.15)
               console.log(`[Chunk ${i + 1}] After trim: ${chunkBuffer.duration.toFixed(2)}s`)
+
+              // ✅ 청크 간 간격 확보를 위해 1초 무음 강제 삽입
+              const silenceBuffer = createSilenceBuffer(audioContext, 1.0)
+              const chunkWithSilence = audioContext.createBuffer(
+                chunkBuffer.numberOfChannels,
+                chunkBuffer.length + silenceBuffer.length,
+                chunkBuffer.sampleRate
+              )
+              for (let channel = 0; channel < chunkBuffer.numberOfChannels; channel++) {
+                const data = chunkWithSilence.getChannelData(channel)
+                data.set(chunkBuffer.getChannelData(channel), 0)
+                data.set(silenceBuffer.getChannelData(channel), chunkBuffer.length)
+              }
+              chunkBuffer = chunkWithSilence
+              console.log(
+                `[Chunk ${i + 1}] After adding 1s silence: ${chunkBuffer.duration.toFixed(2)}s`
+              )
+
+              // ✅ 오디오 길이 검증 (Gemini TTS 절단 현상 방지)
+              // 1자당 최소 0.1초 정도로 계산하여, 그보다 현저히 짧으면(40% 미만) 재생성 시도
+              const charCount = chunkText.replace(/\s/g, '').length
+              const minExpectedSec = charCount * 0.1
+              // 검증 시에는 추가된 1초를 제외한 실제 발화 길이로 체크
+              const actualSpeechSec = chunkBuffer.duration - 1.0
+
+              if (actualSpeechSec < minExpectedSec * 0.4 && charCount > 5) {
+                console.warn(
+                  `[Chunk ${i + 1}] ⚠️ 오디오 길이 부족 감지! (실제 발화: ${actualSpeechSec.toFixed(2)}s, 최소 예상: ${minExpectedSec.toFixed(2)}s)`
+                )
+                throw new Error(
+                  `오디오가 너무 짧게 생성되었습니다. (문자 수 대비 약 ${Math.round((actualSpeechSec / minExpectedSec) * 100)}%)`
+                )
+              }
 
               // Step 3: Direct Script-to-SRT Mapping (No AI transcription)
               const inputLines = chunkText.split('\n').filter(line => line.trim().length > 0)
-              const totalDurationMs = chunkBuffer.duration * 1000
-              const avgLineDurationMs = totalDurationMs / inputLines.length
+              // SRT 타이밍 계산 시에도 마지막 1초 무음을 제외한 구간에 배분
+              const speechDurationMs = (chunkBuffer.duration - 1.0) * 1000
+              const avgLineDurationMs = speechDurationMs / inputLines.length
 
               const parsedChunkSrt: SrtLine[] = inputLines.map((line, idx) => {
                 const lineStartMs = idx * avgLineDurationMs
@@ -858,6 +903,17 @@ export function App() {
                 if (i === 0) throw chunkError // 첫 청크 실패는 즉시 에러 보고
 
                 failedChunkIndices.push(i)
+
+                // 실패한 청크도 인덱스와 UI 표시를 위해 빈 값으로 추가
+                audioChunkItems.push({
+                  id: `chunk-${i}-failed-${Date.now()}`,
+                  index: i,
+                  buffer: null,
+                  text: chunkText,
+                  durationMs: 0,
+                  isFailed: true,
+                })
+
                 setError(
                   `청크 ${i + 1} 생성 실패 (${MAX_RETRIES}회 재시도 초과). 다음 청크 진행 중...`
                 )
@@ -959,6 +1015,11 @@ export function App() {
 
         for (let i = 0; i < targetItem.audioChunks.length; i++) {
           const chunk = targetItem.audioChunks[i]
+
+          if (!chunk.buffer || chunk.isFailed) {
+            console.warn(`[Regenerate SRT] Skipping failed chunk ${i + 1}`)
+            continue
+          }
 
           // 청크 크기 확인
           const chunkSizeBytes = chunk.buffer.length * chunk.buffer.numberOfChannels * 2
