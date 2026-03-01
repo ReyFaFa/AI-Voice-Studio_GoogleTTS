@@ -125,23 +125,41 @@ interface ChunkInfo {
 }
 
 /**
- * 속도 값에 따른 상세한 Pacing 프롬프트 반환
+ * 속도 값에 따른 상세한 Pacing 프롬프트 반환 (백업 - 은유 표현 버전)
  */
+// function getPacingPrompt(speed: number): string {
+//   if (speed <= 0.5) {
+//     return 'Pacing: "Still Water" — extremely slow and meditative. Long pauses between sentences. Each word exists on its own.'
+//   } else if (speed <= 0.7) {
+//     return 'Pacing: "Settling Dust" — slow and deliberate. Each sentence lands fully and settles before the next begins. Pause longer after scene transitions.'
+//   } else if (speed <= 0.9) {
+//     return 'Pacing: "Evening Walk" — unhurried and gentle. Natural breathing room between sentences. No rushing.'
+//   } else if (speed <= 1.1) {
+//     return 'Pacing: "Warm Conversation" — natural conversational pace. Comfortable rhythm with organic pauses.'
+//   } else if (speed <= 1.3) {
+//     return 'Pacing: "Morning Stride" — slightly energetic. Forward momentum while maintaining clarity.'
+//   } else if (speed <= 1.6) {
+//     return 'Pacing: "Quick Current" — brisk and lively. Clear articulation at speed. No mumbling.'
+//   } else {
+//     return 'Pacing: "Lightning Round" — rapid delivery. Every syllable still distinct and precise.'
+//   }
+// }
+
 function getPacingPrompt(speed: number): string {
   if (speed <= 0.5) {
-    return 'Pacing: "Still Water" — extremely slow and meditative. Long pauses between sentences. Each word exists on its own.'
+    return 'Pacing: Read at a very slow, meditative pace. Maintain this exact speed consistently across all sections.'
   } else if (speed <= 0.7) {
-    return 'Pacing: "Settling Dust" — slow and deliberate. Each sentence lands fully and settles before the next begins. Pause longer after scene transitions.'
+    return 'Pacing: Read at a slow, deliberate pace. Maintain this exact speed consistently across all sections.'
   } else if (speed <= 0.9) {
-    return 'Pacing: "Evening Walk" — unhurried and gentle. Natural breathing room between sentences. No rushing.'
+    return 'Pacing: Read at an unhurried, gentle pace. Maintain this exact speed consistently across all sections.'
   } else if (speed <= 1.1) {
-    return 'Pacing: "Warm Conversation" — natural conversational pace. Comfortable rhythm with organic pauses.'
+    return 'Pacing: Read at a natural conversational pace. Maintain this exact speed consistently across all sections.'
   } else if (speed <= 1.3) {
-    return 'Pacing: "Morning Stride" — slightly energetic. Forward momentum while maintaining clarity.'
+    return 'Pacing: Read at a slightly brisk pace. Maintain this exact speed consistently across all sections.'
   } else if (speed <= 1.6) {
-    return 'Pacing: "Quick Current" — brisk and lively. Clear articulation at speed. No mumbling.'
+    return 'Pacing: Read at a quick, lively pace. Maintain this exact speed consistently across all sections.'
   } else {
-    return 'Pacing: "Lightning Round" — rapid delivery. Every syllable still distinct and precise.'
+    return 'Pacing: Read at a rapid pace. Maintain this exact speed consistently across all sections.'
   }
 }
 
@@ -334,11 +352,11 @@ export function msToSrtTime(ms: number): string {
 
 // Compact tone descriptors for "Say in a [style] tone:" format
 const TONE_COMPACT: Record<number, string> = {
-  1: 'Read in a very low register. Slow and heavy.',
-  2: 'Read in a low, calm register. Steady and unhurried.',
-  3: 'Read in a natural mid-range register. Balanced and clear.',
-  4: 'Read in a slightly elevated register. Gentle forward energy.',
-  5: 'Read in a high register. Light and crisp pace.',
+  1: 'Read in a very low, deep register.',
+  2: 'Read in a low register.',
+  3: 'Read in a natural mid-range register.',
+  4: 'Read in a slightly elevated register.',
+  5: 'Read in a high register.',
 }
 
 /**
