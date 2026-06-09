@@ -27,6 +27,94 @@ function isRateLimitError(error: any): boolean {
   )
 }
 
+type ApiErrorWithFallback = Error & {
+  tryNextApiKey?: boolean
+  apiErrorType?: string
+}
+
+function normalizeApiKeys(...keyGroups: Array<string | string[] | undefined>): string[] {
+  const seen = new Set<string>()
+  const keys: string[] = []
+
+  for (const group of keyGroups) {
+    const values = Array.isArray(group) ? group : [group]
+    for (const value of values) {
+      const key = value?.trim()
+      if (!key || seen.has(key)) continue
+      seen.add(key)
+      keys.push(key)
+    }
+  }
+
+  return keys
+}
+
+function createApiError(
+  message: string,
+  options: { tryNextApiKey?: boolean; apiErrorType?: string } = {}
+): ApiErrorWithFallback {
+  const error = new Error(message) as ApiErrorWithFallback
+  error.tryNextApiKey = options.tryNextApiKey
+  error.apiErrorType = options.apiErrorType
+  return error
+}
+
+function isAuthOrApiKeyError(error: any): boolean {
+  const message = error?.message?.toLowerCase() || ''
+  return (
+    message.includes('401') ||
+    message.includes('403') ||
+    message.includes('unauthorized') ||
+    message.includes('forbidden') ||
+    message.includes('permission_denied') ||
+    message.includes('permission denied') ||
+    message.includes('api_key_invalid') ||
+    message.includes('api key not valid') ||
+    message.includes('invalid api key') ||
+    message.includes('api key was reported as leaked') ||
+    message.includes('reported as leaked') ||
+    message.includes('leaked') ||
+    message.includes('expired') ||
+    message.includes('api 키가 유효하지 않거나 권한이 없습니다')
+  )
+}
+
+function isTransientApiError(error: any): boolean {
+  const message = error?.message?.toLowerCase() || ''
+  return (
+    message.includes('500') ||
+    message.includes('502') ||
+    message.includes('503') ||
+    message.includes('504') ||
+    message.includes('internal') ||
+    message.includes('unavailable') ||
+    message.includes('deadline') ||
+    message.includes('timeout') ||
+    message.includes('network') ||
+    message.includes('fetch failed')
+  )
+}
+
+function shouldTryNextApiKey(error: any): boolean {
+  return (
+    error?.tryNextApiKey === true ||
+    isRateLimitError(error) ||
+    isAuthOrApiKeyError(error) ||
+    isTransientApiError(error)
+  )
+}
+
+function getFallbackReason(error: any): string {
+  if (isRateLimitError(error)) return '할당량/Rate Limit'
+  if (isAuthOrApiKeyError(error)) return '키 인증/권한'
+  if (isTransientApiError(error)) return '일시적 API 오류'
+  return 'API 오류'
+}
+
+function getApiErrorMessage(error: any): string {
+  return error instanceof Error ? error.message : String(error)
+}
+
 // TTS 생성용 Fallback 시스템
 export async function generateAudioWithFallback(
   lines: string[],
@@ -43,14 +131,15 @@ export async function generateAudioWithFallback(
   paragraphs: string[]
 }> {
   // 사용할 API 키 목록 준비
-  const validTtsKeys = ttsApiKeys.filter(k => k.trim() !== '')
-  const keysToTry =
-    validTtsKeys.length > 0
-      ? [...validTtsKeys, fallbackApiKey] // TTS 키들 먼저, 기본 키는 마지막
-      : [fallbackApiKey] // TTS 키 없으면 기본 키만
+  const validTtsKeys = normalizeApiKeys(ttsApiKeys)
+  const keysToTry = normalizeApiKeys(validTtsKeys, fallbackApiKey)
+
+  if (keysToTry.length === 0) {
+    throw new Error('API 키가 설정되지 않았습니다. 우측 상단 설정 아이콘에서 API 키를 입력해주세요.')
+  }
 
   let lastError: Error | null = null
-  const originalApiKey = fallbackApiKey // 기본 키 백업
+  const originalApiKey = fallbackApiKey || keysToTry[0] || '' // 기본 키 백업
 
   for (let i = 0; i < keysToTry.length; i++) {
     const currentKey = keysToTry[i]
@@ -83,19 +172,16 @@ export async function generateAudioWithFallback(
 
       lastError = error
 
-      // Rate Limit 에러가 아니면 즉시 종료
-      if (!isRateLimitError(error)) {
-        console.error(`[TTS Fallback] Rate Limit이 아닌 에러 발생, 중단:`, error.message)
-        // 기본 키로 복원
+      const canTryNextKey = i < keysToTry.length - 1 && shouldTryNextApiKey(error)
+
+      if (!canTryNextKey) {
+        console.error(`[TTS Fallback] 다음 키로 해결하기 어려운 에러, 중단:`, error.message)
         setApiKey(originalApiKey)
         throw error
       }
 
-      // Rate Limit 에러이고 다음 키가 있으면 계속 시도
-      if (i < keysToTry.length - 1) {
-        console.log(`[TTS Fallback] 🔄 Rate Limit 감지, 다음 API 키로 전환...`)
-        continue
-      }
+      console.log(`[TTS Fallback] 🔄 ${getFallbackReason(error)} 감지, 다음 API 키로 전환...`)
+      continue
     }
   }
 
@@ -103,7 +189,7 @@ export async function generateAudioWithFallback(
   setApiKey(originalApiKey)
 
   throw new Error(
-    `모든 API 키의 할당량이 초과되었습니다 (${keysToTry.length}개 시도). ` +
+    `모든 API 키로 오디오 생성을 시도했지만 실패했습니다 (${keysToTry.length}개 시도). ` +
       `마지막 에러: ${lastError?.message || '알 수 없음'}`
   )
 }
@@ -211,27 +297,35 @@ interface SpeechConfig {
  * 전역 에러 핸들러: API 에러 응답을 분석하여 사용자 친화적인 메시지로 변환합니다.
  */
 function handleApiError(error: any): Error {
-  const message = error instanceof Error ? error.message : String(error)
+  const message = getApiErrorMessage(error)
+  const lowerMessage = message.toLowerCase()
 
   // 429 Too Many Requests 또는 Quota 관련 키워드 체크
   if (
     message.includes('429') ||
-    message.toLowerCase().includes('quota') ||
-    message.toLowerCase().includes('limit')
+    lowerMessage.includes('quota') ||
+    lowerMessage.includes('limit')
   ) {
-    return new Error(
-      "API 요청 한도(Quota)를 초과했습니다. 유료 계정이라도 모델별 일일 생성량이나 분당 요청 제한이 있을 수 있습니다. Google AI 스튜디오의 'Plan & Billing'에서 할당량을 확인하시거나, 잠시(1~5분) 후 다시 시도해 주세요."
+    return createApiError(
+      "API 요청 한도(Quota)를 초과했습니다. 유료 계정이라도 모델별 일일 생성량이나 분당 요청 제한이 있을 수 있습니다. Google AI 스튜디오의 'Plan & Billing'에서 할당량을 확인하시거나, 잠시(1~5분) 후 다시 시도해 주세요.",
+      { tryNextApiKey: true, apiErrorType: 'quota' }
     )
   }
 
   // 401/403 관련 (인증 에러)
-  if (message.includes('401') || message.includes('403')) {
-    return new Error('API 키가 유효하지 않거나 권한이 없습니다. 설정을 확인해주세요.')
+  if (isAuthOrApiKeyError(error)) {
+    return createApiError('API 키가 유효하지 않거나 권한이 없습니다. 설정을 확인해주세요.', {
+      tryNextApiKey: true,
+      apiErrorType: 'auth',
+    })
   }
 
   // 500 관련 (서버 에러)
-  if (message.includes('500') || message.includes('503')) {
-    return new Error('Google 서버에 일시적인 문제가 발생했습니다. 잠시 후 다시 시도해주세요.')
+  if (isTransientApiError(error)) {
+    return createApiError('Google 서버에 일시적인 문제가 발생했습니다. 잠시 후 다시 시도해주세요.', {
+      tryNextApiKey: true,
+      apiErrorType: 'transient',
+    })
   }
 
   return new Error(`AI와 통신 중 오류가 발생했습니다: ${message}`)
@@ -668,13 +762,8 @@ export const generateSingleSpeakerAudio = async (
     languageCode: 'ko-KR',
   }
 
-  const validTtsKeys = ttsApiKeys.filter(k => k.trim() !== '')
-  let originalKeysToTry =
-    validTtsKeys.length > 0 && fallbackApiKey
-      ? [...validTtsKeys, fallbackApiKey]
-      : fallbackApiKey
-        ? [fallbackApiKey]
-        : validTtsKeys
+  const validTtsKeys = normalizeApiKeys(ttsApiKeys)
+  let originalKeysToTry = normalizeApiKeys(validTtsKeys, fallbackApiKey)
 
   let keysToTry = [...originalKeysToTry]
 
@@ -750,16 +839,23 @@ export const generateSingleSpeakerAudio = async (
       }
       lastError = error
 
-      if (!isRateLimitError(error)) {
+      const canTryNextKey = i < keysToTry.length - 1 && shouldTryNextApiKey(error)
+
+      if (!canTryNextKey) {
         if (keysToTry.length > 1)
-          console.error(`[Single TTS Fallback] Rate Limit이 아닌 에러 발생, 중단:`, error.message)
+          console.error(
+            `[Single TTS Fallback] 다음 키로 해결하기 어려운 에러, 중단:`,
+            error.message
+          )
         setApiKey(originalApiKey)
         throw error
       }
 
       if (i < keysToTry.length - 1) {
         if (keysToTry.length > 1) {
-          console.log(`[Single TTS Fallback] 🔄 Rate Limit 감지, 다음 API 키로 전환 전 대기...`)
+          console.log(
+            `[Single TTS Fallback] 🔄 ${getFallbackReason(error)} 감지, 다음 API 키로 전환 전 대기...`
+          )
         }
         // Thundering herd 방지를 위해 약간의 딜레이 추가 (해당 락 안에서 대기하지 않고 전환 시에만)
         await new Promise(resolve => setTimeout(resolve, 1000 + Math.random() * 500))
@@ -770,7 +866,7 @@ export const generateSingleSpeakerAudio = async (
 
   setApiKey(originalApiKey)
   throw new Error(
-    `모든 API 키의 할당량이 초과되었습니다 (${keysToTry.length}개 시도). 마지막 에러: ${lastError?.message || '알 수 없음'}`
+    `모든 API 키로 오디오 생성을 시도했지만 실패했습니다 (${keysToTry.length}개 시도). 마지막 에러: ${lastError?.message || '알 수 없음'}`
   )
 }
 
