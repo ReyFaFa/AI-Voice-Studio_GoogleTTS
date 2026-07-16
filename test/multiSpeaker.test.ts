@@ -1,6 +1,9 @@
 import { describe, expect, it } from 'vitest'
 import { MultiSpeakerConfig, ScriptLine } from '../types'
 import {
+  applyDetectedSpeakerLabels,
+  detectSpeakerLabels,
+  formatScriptLinesForEditor,
   formatScriptLinesForTts,
   normalizeMultiSpeakerConfig,
   parseSpeakerLine,
@@ -46,6 +49,29 @@ describe('multi-speaker helpers', () => {
     })
   })
 
+  it('adopts two pasted speaker names in order and strips them from line text', () => {
+    const pastedScript = [
+      '홍수아 : 복산이 깔개를 뒤집었습니다.',
+      '',
+      '홍길동 : “찢어진 데가 없습니다.”',
+      '',
+      '홍수아 : 칠성의 말에 복산은 깔개를 다시 접지 않았습니다.',
+    ].join('\n')
+
+    expect(detectSpeakerLabels(pastedScript)).toEqual(['홍수아', '홍길동'])
+
+    const detectedConfig = applyDetectedSpeakerLabels(pastedScript, config)
+    expect(detectedConfig.speakers.map(speaker => speaker.name)).toEqual(['홍수아', '홍길동'])
+    expect(parseSpeakerLine('홍수아 : 복산이 깔개를 뒤집었습니다.', detectedConfig)).toEqual({
+      text: '복산이 깔개를 뒤집었습니다.',
+      speakerId: 'speaker1',
+    })
+    expect(parseSpeakerLine('홍길동 : “찢어진 데가 없습니다.”', detectedConfig)).toEqual({
+      text: '“찢어진 데가 없습니다.”',
+      speakerId: 'speaker2',
+    })
+  })
+
   it('formats API transcript labels while keeping subtitle text label-free', () => {
     const lines: ScriptLine[] = [
       { id: '1', speakerId: 'speaker1', text: '안녕하세요.' },
@@ -55,6 +81,21 @@ describe('multi-speaker helpers', () => {
 
     expect(transcript).toBe('민수: 안녕하세요.\n영희: 반가워요.')
     expect(stripSpeakerPrefix('영희: 반가워요.', config)).toBe('반가워요.')
+  })
+
+  it('keeps blank editor lines blank instead of adding a speaker prefix', () => {
+    const lines: ScriptLine[] = [
+      { id: '1', speakerId: 'speaker1', text: '첫 문장입니다.' },
+      { id: '2', speakerId: 'speaker1', text: '' },
+      { id: '3', speakerId: 'speaker2', text: '둘째 문장입니다.' },
+    ]
+
+    expect(formatScriptLinesForEditor(lines, 'multi', config)).toBe(
+      '민수: 첫 문장입니다.\n\n영희: 둘째 문장입니다.'
+    )
+    expect(formatScriptLinesForTts(lines, 'multi', config)).toBe(
+      '민수: 첫 문장입니다.\n영희: 둘째 문장입니다.'
+    )
   })
 
   it('preserves a speaker label on every long-dialogue chunk fragment', () => {

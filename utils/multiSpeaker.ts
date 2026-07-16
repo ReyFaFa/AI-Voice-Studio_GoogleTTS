@@ -20,6 +20,45 @@ const cloneDefaultConfig = (): MultiSpeakerConfig => ({
 export const normalizeSpeakerLabel = (value: string): string =>
   value.trim().toLocaleLowerCase().replace(/\s+/g, '')
 
+const SPEAKER_LINE_PATTERN = /^\s*([가-힣A-Za-z][가-힣A-Za-z0-9._ -]{0,29})\s*[:\uff1a]\s*(.*)$/
+
+export const detectSpeakerLabels = (text: string): string[] => {
+  const labels: string[] = []
+
+  for (const line of text.split('\n')) {
+    const match = line.match(SPEAKER_LINE_PATTERN)
+    if (!match) continue
+
+    const label = match[1].trim()
+    const normalizedLabel = normalizeSpeakerLabel(label)
+    if (labels.some(existing => normalizeSpeakerLabel(existing) === normalizedLabel)) continue
+
+    labels.push(label)
+    if (labels.length > 2) break
+  }
+
+  return labels
+}
+
+export const applyDetectedSpeakerLabels = (
+  text: string,
+  config: MultiSpeakerConfig
+): MultiSpeakerConfig => {
+  const normalizedConfig = normalizeMultiSpeakerConfig(config)
+  const detectedLabels = detectSpeakerLabels(text)
+
+  // The feature supports exactly two speakers. Avoid guessing when a script
+  // contains only one label or more than two distinct labels.
+  if (detectedLabels.length !== 2) return normalizedConfig
+
+  return {
+    speakers: normalizedConfig.speakers.map((speaker, index) => ({
+      ...speaker,
+      name: detectedLabels[index],
+    })),
+  }
+}
+
 export const normalizeMultiSpeakerConfig = (value: unknown): MultiSpeakerConfig => {
   if (!value || typeof value !== 'object') return cloneDefaultConfig()
 
@@ -72,6 +111,7 @@ export const formatScriptLinesForTts = (
   config: MultiSpeakerConfig
 ): string =>
   lines
+    .filter(line => line.text.trim().length > 0)
     .map(line => {
       if (mode === 'single') return line.text
       const speaker = getSpeakerById(config, line.speakerId)
@@ -88,6 +128,7 @@ export const formatScriptLinesForEditor = (
   lines
     .map(line => {
       if (mode === 'single') return line.text
+      if (!line.text.trim()) return ''
       const speaker = getSpeakerById(config, line.speakerId)
       return `${speaker.name}: ${line.text}`
     })
@@ -105,7 +146,7 @@ export const parseSpeakerLine = (
 ): ParsedSpeakerLine => {
   const speakers = normalizeMultiSpeakerConfig(config).speakers
   const fallback = getSpeakerById(config, fallbackSpeakerId)
-  const match = rawLine.match(/^([^:\uff1a\n]{1,40})\s*[:\uff1a]\s*(.*)$/)
+  const match = rawLine.match(SPEAKER_LINE_PATTERN)
   if (!match) return { text: rawLine, speakerId: fallback.id }
 
   const label = normalizeSpeakerLabel(match[1])
@@ -121,7 +162,7 @@ export const parseSpeakerLine = (
 }
 
 export const stripSpeakerPrefix = (line: string, config: MultiSpeakerConfig): string => {
-  const match = line.match(/^([^:\uff1a\n]{1,40})\s*[:\uff1a]\s*(.*)$/)
+  const match = line.match(SPEAKER_LINE_PATTERN)
   if (!match) return line
 
   const label = normalizeSpeakerLabel(match[1])
