@@ -1,4 +1,5 @@
 import { GoogleGenAI, Modality } from '@google/genai'
+import { SpeakerVoiceAssignment } from '../types'
 
 let generalAI: GoogleGenAI | null = null
 let liveAI: GoogleGenAI | null = null
@@ -463,7 +464,8 @@ function buildEmbeddedPrompt(
   stylePrompt: string | undefined,
   speed: number,
   toneLevel: number,
-  chunkInfo?: ChunkInfo
+  chunkInfo?: ChunkInfo,
+  isMultiSpeaker: boolean = false
 ): string {
   // Google 공식 Prompting Guide 구조
   // https://ai.google.dev/gemini-api/docs/speech-generation#prompting-structure
@@ -478,6 +480,16 @@ function buildEmbeddedPrompt(
 
   const SAMPLE_CONTEXT = `### SAMPLE CONTEXT
 비록 입고 있는 옷은 남들이 버린 것을 기워 입어 누더기 같았지만, 그 좁은 방 안에 감도는 것은 퀴퀴한 가난의 냄새가 아니라`
+
+  if (isMultiSpeaker) {
+    return `${styleDesc}
+Tone: ${toneDesc}
+${pacingDesc}${continuityNote}
+Synthesize the transcript as a natural two-person conversation. Keep each configured voice assigned to the matching speaker label. Speaker labels identify the voice and must not be spoken aloud.
+
+#### TRANSCRIPT
+${scriptText}`
+  }
 
   return `${styleDesc}
 Tone: ${toneDesc}
@@ -562,7 +574,8 @@ async function _generateAudio(
       stylePrompt,
       speed,
       toneLevel,
-      chunkInfo
+      chunkInfo,
+      Boolean(speechConfig.multiSpeakerVoiceConfig)
     )
     console.log(
       `[Gemini API Request] Model: ${modelName}, Total prompt length: ${fullContent.length} chars`
@@ -762,6 +775,80 @@ export const generateSingleSpeakerAudio = async (
     languageCode: 'ko-KR',
   }
 
+  return generateAudioWithSpeechConfig(
+    prompt,
+    modelName,
+    speechConfig,
+    speed,
+    toneLevel,
+    stylePrompt,
+    signal,
+    chunkInfo,
+    ttsApiKeys,
+    fallbackApiKey,
+    'Single TTS Fallback'
+  )
+}
+
+export const generateMultiSpeakerAudio = async (
+  prompt: string,
+  speakers: SpeakerVoiceAssignment[],
+  modelName: string,
+  speed: number = 1.0,
+  toneLevel: number = 3,
+  stylePrompt?: string,
+  signal?: AbortSignal,
+  chunkInfo?: ChunkInfo,
+  ttsApiKeys: string[] = [],
+  fallbackApiKey: string = ''
+): Promise<string> => {
+  if (speakers.length !== 2) {
+    throw new Error('멀티스피커 TTS는 정확히 2명의 화자 설정이 필요합니다.')
+  }
+
+  const speechConfig: SpeechConfig = {
+    multiSpeakerVoiceConfig: {
+      speakerVoiceConfigs: speakers.map(speaker => ({
+        speaker: speaker.name.trim(),
+        voiceConfig: {
+          prebuiltVoiceConfig: {
+            voiceName: speaker.voiceId,
+          },
+        },
+      })),
+    },
+    languageCode: 'ko-KR',
+  }
+
+  return generateAudioWithSpeechConfig(
+    prompt,
+    modelName,
+    speechConfig,
+    speed,
+    toneLevel,
+    stylePrompt,
+    signal,
+    chunkInfo,
+    ttsApiKeys,
+    fallbackApiKey,
+    'Multi TTS Fallback'
+  )
+}
+
+const generateAudioWithSpeechConfig = async (
+  prompt: string,
+  modelName: string,
+  speechConfig: SpeechConfig,
+  speed: number,
+  toneLevel: number,
+  stylePrompt: string | undefined,
+  signal: AbortSignal | undefined,
+  chunkInfo: ChunkInfo | undefined,
+  ttsApiKeys: string[],
+  fallbackApiKey: string,
+  logLabel: string
+): Promise<string> => {
+
   const validTtsKeys = normalizeApiKeys(ttsApiKeys)
   let originalKeysToTry = normalizeApiKeys(validTtsKeys, fallbackApiKey)
 
@@ -810,7 +897,7 @@ export const generateSingleSpeakerAudio = async (
     try {
       if (keysToTry.length > 1) {
         console.log(
-          `[Single TTS Fallback] ${keyType} API 키 시도 중... (${i + 1}/${keysToTry.length})`
+          `[${logLabel}] ${keyType} API 키 시도 중... (${i + 1}/${keysToTry.length})`
         )
       }
 
@@ -829,13 +916,13 @@ export const generateSingleSpeakerAudio = async (
       if (keysToTry.length > 1) {
         // 성공 시 성공한 키를 기억
         lastSuccessfulKey = currentKey
-        console.log(`[Single TTS Fallback] ✅ ${keyType} API 키로 성공!`)
+        console.log(`[${logLabel}] ✅ ${keyType} API 키로 성공!`)
       }
       setApiKey(originalApiKey)
       return result
     } catch (error: any) {
       if (keysToTry.length > 1) {
-        console.warn(`[Single TTS Fallback] ❌ ${keyType} API 키 실패:`, error.message)
+        console.warn(`[${logLabel}] ❌ ${keyType} API 키 실패:`, error.message)
       }
       lastError = error
 
@@ -844,7 +931,7 @@ export const generateSingleSpeakerAudio = async (
       if (!canTryNextKey) {
         if (keysToTry.length > 1)
           console.error(
-            `[Single TTS Fallback] 다음 키로 해결하기 어려운 에러, 중단:`,
+            `[${logLabel}] 다음 키로 해결하기 어려운 에러, 중단:`,
             error.message
           )
         setApiKey(originalApiKey)
@@ -854,7 +941,7 @@ export const generateSingleSpeakerAudio = async (
       if (i < keysToTry.length - 1) {
         if (keysToTry.length > 1) {
           console.log(
-            `[Single TTS Fallback] 🔄 ${getFallbackReason(error)} 감지, 다음 API 키로 전환 전 대기...`
+            `[${logLabel}] 🔄 ${getFallbackReason(error)} 감지, 다음 API 키로 전환 전 대기...`
           )
         }
         // Thundering herd 방지를 위해 약간의 딜레이 추가 (해당 락 안에서 대기하지 않고 전환 시에만)

@@ -28,7 +28,20 @@ import {
   XCircleIcon,
 } from '../constants'
 import { matchSubtitlesWithAI } from '../services/geminiService'
-import { Preset, ScriptLine, SrtLine, Voice } from '../types'
+import {
+  MultiSpeakerConfig,
+  MultiSpeakerId,
+  Preset,
+  ScriptLine,
+  SpeakerMode,
+  SrtLine,
+  Voice,
+} from '../types'
+import {
+  formatScriptLinesForEditor,
+  normalizeMultiSpeakerConfig,
+  validateMultiSpeakerConfig,
+} from '../utils/multiSpeaker'
 import { AudioPlayer, AudioPlayerHandle } from './AudioPlayer'
 import { encodeAudioBufferToWavBlob, msToSrtTime, parseSrt, srtTimeToMs } from './Header'
 import { ScriptAnalysis } from './ScriptAnalysis'
@@ -38,6 +51,13 @@ export interface MainContentProps {
   // Voice & Settings Props
   singleSpeakerVoice: string
   setSingleSpeakerVoice: (voice: string) => void
+  speakerMode: SpeakerMode
+  setSpeakerMode: (mode: SpeakerMode) => void
+  multiSpeakerConfig: MultiSpeakerConfig
+  onUpdateMultiSpeaker: (
+    speakerId: MultiSpeakerId,
+    updates: { name?: string; voiceId?: string }
+  ) => void
   speechSpeed: number
   setSpeechSpeed: (speed: number) => void
   toneLevel: number
@@ -130,6 +150,8 @@ export interface MainContentProps {
 
 interface ScriptEditorProps {
   scriptLines: ScriptLine[]
+  speakerMode: SpeakerMode
+  multiSpeakerConfig: MultiSpeakerConfig
   onScriptChange: (newFullScript: string) => void
   onUpdateScriptLine: (id: string, newValues: Partial<Omit<ScriptLine, 'id'>>) => void
   onRemoveScriptLine: (id: string) => void
@@ -155,6 +177,8 @@ const ScriptRow = React.memo(
     onMergeScriptLine,
     onSplitScriptLine,
     onRemoveScriptLine,
+    speakerMode,
+    multiSpeakerConfig,
   }: {
     line: ScriptLine
     index: number
@@ -163,6 +187,8 @@ const ScriptRow = React.memo(
     onMergeScriptLine: (index: number, direction: 'up' | 'down') => void
     onSplitScriptLine: (index: number, cursorPosition: number) => void
     onRemoveScriptLine: (id: string) => void
+    speakerMode: SpeakerMode
+    multiSpeakerConfig: MultiSpeakerConfig
   }) => {
     return (
       <div className="group flex items-start gap-2 bg-gray-900/30 hover:bg-gray-900/50 p-2 rounded-md transition-colors border border-transparent hover:border-gray-700/50">
@@ -189,6 +215,20 @@ const ScriptRow = React.memo(
         </div>
         <div className="flex-grow">
           <div className="flex items-center gap-2 mb-1">
+            {speakerMode === 'multi' && (
+              <select
+                value={line.speakerId}
+                onChange={e => onUpdateScriptLine(line.id, { speakerId: e.target.value })}
+                className="appearance-none bg-indigo-950/60 text-xs text-indigo-200 border border-indigo-700 rounded px-2 py-0.5 pr-6 focus:outline-none focus:border-indigo-400 cursor-pointer"
+                title="이 줄을 읽을 화자"
+              >
+                {normalizeMultiSpeakerConfig(multiSpeakerConfig).speakers.map(speaker => (
+                  <option key={speaker.id} value={speaker.id}>
+                    {speaker.name}
+                  </option>
+                ))}
+              </select>
+            )}
             <div className="relative group/style">
               <select
                 value={line.style || ''}
@@ -245,6 +285,8 @@ const ScriptRow = React.memo(
 
 const ScriptEditor: React.FC<ScriptEditorProps> = ({
   scriptLines,
+  speakerMode,
+  multiSpeakerConfig,
   onScriptChange,
   onUpdateScriptLine,
   onRemoveScriptLine,
@@ -268,7 +310,7 @@ const ScriptEditor: React.FC<ScriptEditorProps> = ({
     comma: false,
   })
 
-  const fullScript = scriptLines.map(l => l.text).join('\n')
+  const fullScript = formatScriptLinesForEditor(scriptLines, speakerMode, multiSpeakerConfig)
 
   const handleAutoFormatApply = () => {
     onAutoFormatScript(autoFormatOptions)
@@ -429,6 +471,8 @@ const ScriptEditor: React.FC<ScriptEditorProps> = ({
                 line={line}
                 index={index}
                 scriptLinesLength={scriptLines.length}
+                speakerMode={speakerMode}
+                multiSpeakerConfig={multiSpeakerConfig}
                 onUpdateScriptLine={onUpdateScriptLine}
                 onMergeScriptLine={onMergeScriptLine}
                 onSplitScriptLine={onSplitScriptLine}
@@ -445,6 +489,10 @@ const ScriptEditor: React.FC<ScriptEditorProps> = ({
 export const MainContent: React.FC<MainContentProps> = ({
   singleSpeakerVoice,
   setSingleSpeakerVoice,
+  speakerMode,
+  setSpeakerMode,
+  multiSpeakerConfig,
+  onUpdateMultiSpeaker,
   speechSpeed,
   setSpeechSpeed,
   toneLevel,
@@ -619,6 +667,16 @@ export const MainContent: React.FC<MainContentProps> = ({
       return 0
     })
   }, [voices, favorites])
+
+  const normalizedMultiSpeakerConfig = useMemo(
+    () => normalizeMultiSpeakerConfig(multiSpeakerConfig),
+    [multiSpeakerConfig]
+  )
+  const multiSpeakerValidationError = validateMultiSpeakerConfig(normalizedMultiSpeakerConfig)
+  const isSpeakerSetupComplete =
+    speakerMode === 'single'
+      ? Boolean(singleSpeakerVoice)
+      : multiSpeakerValidationError === null
 
   const handleSplitCountChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setLocalSplitCount(e.target.value)
@@ -1533,9 +1591,31 @@ export const MainContent: React.FC<MainContentProps> = ({
 
               {/* 3. Voice & Speed Selection */}
               <div className="flex flex-col gap-3 pt-2 border-t border-gray-700">
+                <div className="flex items-center justify-between gap-3 rounded-lg border border-gray-700 bg-gray-900/40 p-2">
+                  <div>
+                    <p className="text-xs font-semibold text-gray-300">화자 모드</p>
+                    <p className="text-[10px] text-gray-500">낭독 1명 또는 대화 2명</p>
+                  </div>
+                  <div className="flex rounded-md border border-gray-600 bg-gray-800 p-0.5">
+                    <button
+                      type="button"
+                      onClick={() => setSpeakerMode('single')}
+                      className={`rounded px-3 py-1.5 text-xs font-semibold transition-colors ${speakerMode === 'single' ? 'bg-indigo-600 text-white' : 'text-gray-400 hover:text-white'}`}
+                    >
+                      1인 낭독
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => setSpeakerMode('multi')}
+                      className={`rounded px-3 py-1.5 text-xs font-semibold transition-colors ${speakerMode === 'multi' ? 'bg-purple-600 text-white' : 'text-gray-400 hover:text-white'}`}
+                    >
+                      2인 대화
+                    </button>
+                  </div>
+                </div>
                 <div className="flex justify-between items-center gap-2">
                   <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
-                    음성 선택
+                    {speakerMode === 'single' ? '음성 선택' : '화자별 음성 선택'}
                   </label>
                   <div className="flex items-center gap-2">
                     {/* Tone Control */}
@@ -1600,7 +1680,9 @@ export const MainContent: React.FC<MainContentProps> = ({
                     </div>
                   </div>
                 </div>
-                <div className="flex gap-2">
+                {speakerMode === 'single' ? (
+                  <>
+                    <div className="flex gap-2">
                   <div className="relative flex-grow">
                     <select
                       value={singleSpeakerVoice}
@@ -1649,29 +1731,116 @@ export const MainContent: React.FC<MainContentProps> = ({
                       <PlayIcon className="w-5 h-5" />
                     )}
                   </button>
-                </div>
+                    </div>
 
-                {/* Voice Description Edit */}
-                {singleSpeakerVoice &&
-                  (() => {
-                    const selectedVoice = voices.find(v => v.id === singleSpeakerVoice)
-                    if (!selectedVoice) return null
-                    return (
-                      <div className="flex items-center gap-2 mt-1">
-                        <PencilIcon className="w-3.5 h-3.5 text-gray-500 flex-shrink-0" />
-                        <input
-                          type="text"
-                          value={selectedVoice.description}
-                          onChange={e =>
-                            onUpdateVoiceDescription(singleSpeakerVoice, e.target.value)
-                          }
-                          className="flex-grow bg-transparent border-b border-gray-600 hover:border-gray-500 focus:border-indigo-500 text-xs text-gray-300 py-0.5 px-1 focus:outline-none transition-colors placeholder-gray-600"
-                          placeholder="보이스 설명을 입력하세요"
-                          title="보이스 설명 편집 (자동 저장됨)"
-                        />
-                      </div>
-                    )
-                  })()}
+                    {/* Voice Description Edit */}
+                    {singleSpeakerVoice &&
+                      (() => {
+                        const selectedVoice = voices.find(v => v.id === singleSpeakerVoice)
+                        if (!selectedVoice) return null
+                        return (
+                          <div className="flex items-center gap-2 mt-1">
+                            <PencilIcon className="w-3.5 h-3.5 text-gray-500 flex-shrink-0" />
+                            <input
+                              type="text"
+                              value={selectedVoice.description}
+                              onChange={e =>
+                                onUpdateVoiceDescription(singleSpeakerVoice, e.target.value)
+                              }
+                              className="flex-grow bg-transparent border-b border-gray-600 hover:border-gray-500 focus:border-indigo-500 text-xs text-gray-300 py-0.5 px-1 focus:outline-none transition-colors placeholder-gray-600"
+                              placeholder="보이스 설명을 입력하세요"
+                              title="보이스 설명 편집 (자동 저장됨)"
+                            />
+                          </div>
+                        )
+                      })()}
+                  </>
+                ) : (
+                  <div className="space-y-3">
+                    <div className="grid grid-cols-1 gap-3 xl:grid-cols-2">
+                      {normalizedMultiSpeakerConfig.speakers.map((speaker, index) => {
+                        const selectedVoice = voices.find(voice => voice.id === speaker.voiceId)
+                        const otherVoiceId = normalizedMultiSpeakerConfig.speakers.find(
+                          item => item.id !== speaker.id
+                        )?.voiceId
+                        return (
+                          <div
+                            key={speaker.id}
+                            className="rounded-lg border border-purple-800/60 bg-purple-950/20 p-3"
+                          >
+                            <div className="mb-2 flex items-center justify-between">
+                              <span className="text-xs font-bold text-purple-300">화자 {index + 1}</span>
+                              {selectedVoice && (
+                                <span className="text-[10px] text-gray-500">
+                                  {selectedVoice.gender === 'male' ? '남성' : '여성'}
+                                </span>
+                              )}
+                            </div>
+                            <input
+                              type="text"
+                              value={speaker.name}
+                              maxLength={40}
+                              onChange={e =>
+                                onUpdateMultiSpeaker(speaker.id, { name: e.target.value })
+                              }
+                              placeholder={`화자 ${index + 1} 이름`}
+                              className="mb-2 w-full rounded-md border border-gray-600 bg-gray-900 px-2.5 py-2 text-sm text-white placeholder-gray-500 focus:border-purple-500 focus:outline-none"
+                            />
+                            <div className="flex gap-2">
+                              <select
+                                value={speaker.voiceId}
+                                onChange={e =>
+                                  onUpdateMultiSpeaker(speaker.id, { voiceId: e.target.value })
+                                }
+                                className={`min-w-0 flex-1 rounded-md border border-gray-600 bg-gray-700 px-2.5 py-2 text-sm ${speaker.voiceId ? 'text-white' : 'text-gray-400'}`}
+                              >
+                                <option value="" disabled>
+                                  목소리를 선택하세요
+                                </option>
+                                {sortedVoices.map(voice => (
+                                  <option
+                                    key={voice.id}
+                                    value={voice.id}
+                                    disabled={voice.id === otherVoiceId}
+                                  >
+                                    {favorites.includes(voice.id) ? '★ ' : ''}
+                                    {voice.name} ({voice.gender === 'male' ? '남' : '여'}) -{' '}
+                                    {voice.description}
+                                  </option>
+                                ))}
+                              </select>
+                              <button
+                                type="button"
+                                onClick={() => speaker.voiceId && onPreviewVoice(speaker.voiceId)}
+                                disabled={!speaker.voiceId || isPreviewLoading[speaker.voiceId]}
+                                className="rounded-md bg-purple-600 p-2 text-white hover:bg-purple-700 disabled:cursor-not-allowed disabled:bg-gray-600"
+                                aria-label={`${speaker.name} 음성 미리듣기`}
+                              >
+                                {isPreviewLoading[speaker.voiceId] ? (
+                                  <div className="h-5 w-5 animate-spin rounded-full border-2 border-white border-t-transparent" />
+                                ) : (
+                                  <PlayIcon className="h-5 w-5" />
+                                )}
+                              </button>
+                            </div>
+                            {selectedVoice && (
+                              <p className="mt-2 truncate text-[10px] text-gray-500">
+                                {selectedVoice.description}
+                              </p>
+                            )}
+                          </div>
+                        )
+                      })}
+                    </div>
+                    <div className="rounded-md border border-indigo-900/60 bg-indigo-950/30 px-3 py-2 text-[11px] text-indigo-200">
+                      대본은 <span className="font-mono">화자명: 대사</span> 형식으로 붙여넣거나,
+                      아래 상세 편집에서 각 줄의 화자를 선택하세요.
+                    </div>
+                    {multiSpeakerValidationError && (
+                      <p className="text-xs text-amber-400">{multiSpeakerValidationError}</p>
+                    )}
+                  </div>
+                )}
               </div>
 
               {/* 3. Director's Notes */}
@@ -1728,7 +1897,7 @@ export const MainContent: React.FC<MainContentProps> = ({
                       <button
                         onClick={onGenerateSample}
                         disabled={
-                          !singleSpeakerVoice ||
+                          !isSpeakerSetupComplete ||
                           scriptLines.every(l => !l.text.trim()) ||
                           sampleLoading
                         }
@@ -1740,7 +1909,7 @@ export const MainContent: React.FC<MainContentProps> = ({
                       </button>
                       <button
                         onClick={onGenerateAudio}
-                        disabled={!singleSpeakerVoice || scriptLines.every(l => !l.text.trim())}
+                        disabled={!isSpeakerSetupComplete || scriptLines.every(l => !l.text.trim())}
                         className="flex items-center justify-center gap-2 bg-indigo-600 text-white text-xs font-bold py-2 px-3 rounded-md hover:bg-indigo-700 disabled:bg-gray-600 disabled:cursor-not-allowed transition-colors"
                       >
                         <SparklesIcon className="w-4 h-4" />
@@ -1801,6 +1970,8 @@ export const MainContent: React.FC<MainContentProps> = ({
             <div className="flex-grow flex flex-col min-h-[900px] h-full">
               <ScriptEditor
                 scriptLines={scriptLines}
+                speakerMode={speakerMode}
+                multiSpeakerConfig={multiSpeakerConfig}
                 onScriptChange={onScriptChange}
                 onUpdateScriptLine={onUpdateScriptLine}
                 onRemoveScriptLine={onRemoveScriptLine}

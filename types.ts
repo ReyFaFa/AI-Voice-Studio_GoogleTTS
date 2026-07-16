@@ -18,6 +18,20 @@ export interface ScriptLine {
   style?: string
 }
 
+export type SpeakerMode = 'single' | 'multi'
+
+export type MultiSpeakerId = 'speaker1' | 'speaker2'
+
+export interface SpeakerVoiceAssignment {
+  id: MultiSpeakerId
+  name: string
+  voiceId: string
+}
+
+export interface MultiSpeakerConfig {
+  speakers: SpeakerVoiceAssignment[]
+}
+
 export interface SrtLine {
   id: string
   index: number
@@ -40,6 +54,8 @@ export interface Preset {
   maxLines?: number // 최대 줄 수
   maxEstimatedSeconds?: number // 최대 예상 소요 시간
   createdAt?: string // 생성 시간 (ISO string)
+  speakerMode?: SpeakerMode
+  multiSpeakerConfig?: MultiSpeakerConfig
 }
 
 export interface TtsApiKey {
