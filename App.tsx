@@ -66,11 +66,14 @@ async function runWithConcurrency<T>(
   concurrency: number
 ): Promise<PromiseSettledResult<T>[]> {
   const results: PromiseSettledResult<T>[] = new Array(tasks.length)
-  let index = 0
+  let nextTaskIndex = 0
 
   async function worker() {
-    while (index < tasks.length) {
-      const currentIndex = index++
+    while (true) {
+      const currentIndex = nextTaskIndex
+      nextTaskIndex++
+      if (currentIndex >= tasks.length) break
+
       try {
         const value = await tasks[currentIndex]()
         results[currentIndex] = { status: 'fulfilled', value }
@@ -169,6 +172,20 @@ export function App() {
   const [toneLevel, setToneLevel] = useState<number>(2) // 1-5, 기본값 2 (심야 라디오 스타일)
   const [scriptLines, setScriptLines] = useState<ScriptLine[]>([])
 
+  // Chunking Settings (Persistent)
+  const [chunkMaxLength, setChunkMaxLength] = useState<number>(() => {
+    const saved = localStorage.getItem('chunk_max_length')
+    return saved ? parseInt(saved) : 400
+  })
+  const [chunkMaxLines, setChunkMaxLines] = useState<number>(() => {
+    const saved = localStorage.getItem('chunk_max_lines')
+    return saved ? parseInt(saved) : 16
+  })
+  const [chunkMaxEstimatedSeconds, setChunkMaxEstimatedSeconds] = useState<number>(() => {
+    const saved = localStorage.getItem('chunk_max_estimated_seconds')
+    return saved ? parseInt(saved) : 66
+  })
+
   // Advanced TTS Settings (Persistent)
   const [selectedModel, setSelectedModel] = useState<string>(() => {
     return localStorage.getItem('tts_selected_model') || 'gemini-2.5-flash-preview-tts'
@@ -202,6 +219,21 @@ export function App() {
     }
     return []
   })
+
+  // Custom Voice Descriptions (Persistent)
+  const [customVoiceDescriptions, setCustomVoiceDescriptions] = useState<Record<string, string>>(
+    () => {
+      const stored = localStorage.getItem('custom_voice_descriptions')
+      if (stored) {
+        try {
+          return JSON.parse(stored)
+        } catch (e) {
+          return {}
+        }
+      }
+      return {}
+    }
+  )
 
   const [ttsResult, setTtsResult] = useState<TtsResult>({ audioHistory: [], srtContent: null })
   const [activeAudioId, setActiveAudioId] = useState<string | null>(null)
@@ -281,6 +313,33 @@ export function App() {
     localStorage.setItem('tts_style_prompt', stylePrompt)
   }, [stylePrompt])
 
+  // Custom Voice Descriptions localStorage 저장
+  useEffect(() => {
+    localStorage.setItem('custom_voice_descriptions', JSON.stringify(customVoiceDescriptions))
+  }, [customVoiceDescriptions])
+
+  // 커스텀 설명이 반영된 voices 목록
+  const voicesWithCustomDesc = useMemo(() => {
+    return VOICES.map(voice => ({
+      ...voice,
+      description: customVoiceDescriptions[voice.id] || voice.description,
+    }))
+  }, [customVoiceDescriptions])
+
+  const handleUpdateVoiceDescription = useCallback((voiceId: string, description: string) => {
+    setCustomVoiceDescriptions(prev => {
+      const next = { ...prev }
+      // 기본값과 같으면 커스텀 항목에서 제거 (클린업)
+      const defaultVoice = VOICES.find(v => v.id === voiceId)
+      if (defaultVoice && description === defaultVoice.description) {
+        delete next[voiceId]
+      } else {
+        next[voiceId] = description
+      }
+      return next
+    })
+  }, [])
+
   useEffect(() => {
     localStorage.setItem('tts_selected_model', selectedModel)
   }, [selectedModel])
@@ -296,6 +355,17 @@ export function App() {
   useEffect(() => {
     localStorage.setItem('tts_api_keys', JSON.stringify(ttsApiKeys))
   }, [ttsApiKeys])
+
+  // 청크 설정 localStorage 저장
+  useEffect(() => {
+    localStorage.setItem('chunk_max_length', chunkMaxLength.toString())
+  }, [chunkMaxLength])
+  useEffect(() => {
+    localStorage.setItem('chunk_max_lines', chunkMaxLines.toString())
+  }, [chunkMaxLines])
+  useEffect(() => {
+    localStorage.setItem('chunk_max_estimated_seconds', chunkMaxEstimatedSeconds.toString())
+  }, [chunkMaxEstimatedSeconds])
 
   // TTS API 키 추가
   const handleAddTtsKey = () => {
@@ -344,6 +414,10 @@ export function App() {
       stylePrompt,
       model: selectedModel,
       speed: speechSpeed,
+      maxLength: chunkMaxLength,
+      maxLines: chunkMaxLines,
+      maxEstimatedSeconds: chunkMaxEstimatedSeconds,
+      createdAt: new Date().toISOString(),
     }
     const updated = [...presets, newPreset]
     setPresets(updated)
@@ -364,6 +438,9 @@ export function App() {
     setStylePrompt(preset.stylePrompt)
     setSelectedModel(preset.model)
     setSpeechSpeed(preset.speed)
+    if (preset.maxLength) setChunkMaxLength(preset.maxLength)
+    if (preset.maxLines) setChunkMaxLines(preset.maxLines)
+    if (preset.maxEstimatedSeconds) setChunkMaxEstimatedSeconds(preset.maxEstimatedSeconds)
   }
 
   const handleExportPreset = () => {
@@ -374,6 +451,9 @@ export function App() {
       stylePrompt,
       model: selectedModel,
       speed: speechSpeed,
+      maxLength: chunkMaxLength,
+      maxLines: chunkMaxLines,
+      maxEstimatedSeconds: chunkMaxEstimatedSeconds,
     }
 
     const jsonString = JSON.stringify(currentPreset, null, 2)
@@ -401,6 +481,10 @@ export function App() {
           setStylePrompt(importedPreset.stylePrompt || '')
           setSelectedModel(importedPreset.model)
           setSpeechSpeed(importedPreset.speed || 1.0)
+          if (importedPreset.maxLength) setChunkMaxLength(importedPreset.maxLength)
+          if (importedPreset.maxLines) setChunkMaxLines(importedPreset.maxLines)
+          if (importedPreset.maxEstimatedSeconds)
+            setChunkMaxEstimatedSeconds(importedPreset.maxEstimatedSeconds)
           alert('프리셋을 불러왔습니다.')
         } else {
           alert('올바르지 않은 프리셋 파일입니다.')
@@ -599,6 +683,11 @@ export function App() {
   const handlePreviewVoice = async (voiceId: string) => {
     if (isPreviewLoading[voiceId]) return
 
+    const selectedVoice = VOICES.find(v => v.id === voiceId)
+    console.log(
+      `[Voice Preview] 🔊 음성 샘플 듣기: ${selectedVoice ? `${selectedVoice.name} (${selectedVoice.id})` : voiceId}`
+    )
+
     setIsPreviewLoading(prev => ({ ...prev, [voiceId]: true }))
     try {
       const base64Pcm = await previewVoice(
@@ -639,6 +728,11 @@ export function App() {
       setError('음성을 선택해주세요.')
       return
     }
+
+    const selectedVoice = VOICES.find(v => v.id === singleSpeakerVoice)
+    console.log(
+      `[Full Generation] 🚀 전체 생성 시작 - 음성: ${selectedVoice ? `${selectedVoice.name} (${selectedVoice.id})` : singleSpeakerVoice}`
+    )
 
     setIsLoading(true)
     setLoadingStatus('대본 분석 및 분할 중...')
@@ -710,9 +804,13 @@ export function App() {
         setOriginalSrtLines(JSON.parse(JSON.stringify(finalSrtLines)))
         setHasTimestampEdits(false)
       } else {
-        // 청크 분할: 예상시간 기준으로 균등 분할
-        // 고주파음 방지를 위해 1200자 50줄 상한으로 롤백
-        const textChunks = splitTextIntoChunks(fullText, 1200, 50, 200)
+        // 청크 분할: 프리셋 및 설정된 분할 기준 적용
+        const textChunks = splitTextIntoChunks(
+          fullText,
+          chunkMaxLength,
+          chunkMaxLines,
+          chunkMaxEstimatedSeconds
+        )
         const totalChunks = textChunks.length
 
         // ============================================================
@@ -1076,7 +1174,6 @@ export function App() {
 
         for (let i = 0; i < settled.length; i++) {
           const result = settled[i]
-
           if (result.status === 'rejected') {
             // AbortError는 전파
             if (result.reason instanceof DOMException && result.reason.name === 'AbortError') {
@@ -1085,6 +1182,7 @@ export function App() {
             // 첫 청크 실패 시 전체 중단
             if (i === 0) throw result.reason
 
+            console.error(`[Merge] ❌ 청크 ${i + 1} 생성 실패:`, result.reason)
             failedChunkIndices.push(i)
             audioChunkItems.push({
               id: `chunk-${i}-failed-${Date.now()}`,
@@ -1097,7 +1195,17 @@ export function App() {
             continue
           }
 
-          const { buffer, text, durationMs } = result.value
+          // status가 'fulfilled'인 경우에만 value에 접근
+          const { index: chunkIdx, buffer, text, durationMs } = result.value
+
+          // 인덱스 정합성 확인 로그
+          console.log(
+            `[Merge] 📥 병합 중: ${i + 1}/${totalChunks} (청크 인덱스: ${chunkIdx}, 길이: ${(durationMs / 1000).toFixed(2)}s)`
+          )
+
+          if (chunkIdx !== i) {
+            console.error(`[Merge] ⚠️ 순서 불일치 감지! 기대값: ${i}, 실제값: ${chunkIdx}`)
+          }
 
           // SRT 생성
           const inputLines = text.split('\n').filter(line => line.trim().length > 0)
@@ -1636,6 +1744,11 @@ export function App() {
     }
 
     const chunk = targetItem.audioChunks[chunkIndex]
+    // 파일명 생성 로직: 첫 5단어 추출 (특수문자 제거)
+    const cleanText = chunk.text.replace(/[!,?.[\]{}()]/g, ' ')
+    const words = cleanText.split(/\s+/).filter(w => w.length > 0)
+    const nameSlug = words.slice(0, 5).join('_') || 'chunk'
+    const displayIndex = String(chunkIndex + 1).padStart(2, '0')
 
     try {
       // WAV 파일로 인코딩
@@ -1645,7 +1758,7 @@ export function App() {
       const url = URL.createObjectURL(wavBlob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `chunk-${String(chunkIndex + 1).padStart(2, '0')}.wav`
+      a.download = `${displayIndex}-${nameSlug}.wav`
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)
@@ -1669,6 +1782,11 @@ export function App() {
       setError('미리보기할 텍스트가 없습니다.')
       return
     }
+
+    const selectedVoice = VOICES.find(v => v.id === singleSpeakerVoice)
+    console.log(
+      `[Sample Preview] 🧪 샘플 생성 시작 - 음성: ${selectedVoice ? `${selectedVoice.name} (${selectedVoice.id})` : singleSpeakerVoice}`
+    )
 
     setSampleLoading(true)
     setSampleAudio(null)
@@ -2227,7 +2345,8 @@ export function App() {
             setSpeechSpeed={setSpeechSpeed}
             toneLevel={toneLevel}
             setToneLevel={setToneLevel}
-            voices={VOICES}
+            voices={voicesWithCustomDesc}
+            onUpdateVoiceDescription={handleUpdateVoiceDescription}
             onPreviewVoice={handlePreviewVoice}
             isPreviewLoading={isPreviewLoading}
             srtSplitCharCount={srtSplitCharCount}
@@ -2245,6 +2364,13 @@ export function App() {
             onLoadPreset={handleLoadPreset}
             onExportPreset={handleExportPreset}
             onImportPreset={handleImportPreset}
+            // Chunking Settings Props
+            chunkMaxLength={chunkMaxLength}
+            setChunkMaxLength={setChunkMaxLength}
+            chunkMaxLines={chunkMaxLines}
+            setChunkMaxLines={setChunkMaxLines}
+            chunkMaxEstimatedSeconds={chunkMaxEstimatedSeconds}
+            setChunkMaxEstimatedSeconds={setChunkMaxEstimatedSeconds}
             isLoading={isLoading}
             loadingStatus={loadingStatus}
             error={error}

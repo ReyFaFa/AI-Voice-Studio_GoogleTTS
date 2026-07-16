@@ -36,6 +36,10 @@ export interface Preset {
   stylePrompt: string
   model: string
   speed: number
+  maxLength?: number // 최대 글자 수
+  maxLines?: number // 최대 줄 수
+  maxEstimatedSeconds?: number // 최대 예상 소요 시간
+  createdAt?: string // 생성 시간 (ISO string)
 }
 
 export interface TtsApiKey {

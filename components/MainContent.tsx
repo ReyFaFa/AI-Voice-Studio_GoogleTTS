@@ -43,6 +43,7 @@ export interface MainContentProps {
   toneLevel: number
   setToneLevel: (level: number) => void
   voices: Voice[]
+  onUpdateVoiceDescription: (voiceId: string, description: string) => void
   onPreviewVoice: (voiceId: string) => void
   isPreviewLoading: Record<string, boolean>
   srtSplitCharCount: number
@@ -62,6 +63,14 @@ export interface MainContentProps {
   onLoadPreset: (id: string) => void
   onExportPreset: () => void
   onImportPreset: (file: File) => void
+
+  // Chunking Settings Props
+  chunkMaxLength: number
+  setChunkMaxLength: (val: number) => void
+  chunkMaxLines: number
+  setChunkMaxLines: (val: number) => void
+  chunkMaxEstimatedSeconds: number
+  setChunkMaxEstimatedSeconds: (val: number) => void
 
   // Main Props
   isLoading: boolean
@@ -441,6 +450,7 @@ export const MainContent: React.FC<MainContentProps> = ({
   toneLevel,
   setToneLevel,
   voices,
+  onUpdateVoiceDescription,
   onPreviewVoice,
   isPreviewLoading,
   srtSplitCharCount,
@@ -459,6 +469,14 @@ export const MainContent: React.FC<MainContentProps> = ({
   onLoadPreset,
   onExportPreset,
   onImportPreset,
+
+  // Chunking Settings Props
+  chunkMaxLength,
+  setChunkMaxLength,
+  chunkMaxLines,
+  setChunkMaxLines,
+  chunkMaxEstimatedSeconds,
+  setChunkMaxEstimatedSeconds,
 
   isLoading,
   loadingStatus,
@@ -1292,11 +1310,20 @@ export const MainContent: React.FC<MainContentProps> = ({
                     <option value="" disabled>
                       설정 불러오기...
                     </option>
-                    {presets.map(p => (
-                      <option key={p.id} value={p.id}>
-                        {p.name}
-                      </option>
-                    ))}
+                    {presets.map(p => {
+                      const date = p.createdAt
+                        ? new Date(p.createdAt)
+                        : new Date(parseInt(p.id, 10))
+                      const dateString = isNaN(date.getTime())
+                        ? ''
+                        : ` (${date.toLocaleDateString()} ${date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })})`
+                      return (
+                        <option key={p.id} value={p.id}>
+                          {p.name}
+                          {dateString}
+                        </option>
+                      )
+                    })}
                   </select>
 
                   {/* Delete Preset Button */}
@@ -1436,7 +1463,75 @@ export const MainContent: React.FC<MainContentProps> = ({
                 </div>
               </div>
 
-              {/* 2. Voice & Speed Selection */}
+              {/* 2. Chunking Configuration */}
+              <div className="flex flex-col gap-3 pt-3 border-t border-gray-700">
+                <div className="flex items-center justify-between">
+                  <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
+                    청크 분할 설정
+                  </label>
+                  <span className="text-[10px] text-gray-500 italic">안정적 분할 권장</span>
+                </div>
+                <div className="grid grid-cols-1 gap-4 bg-gray-800/40 p-3 rounded-lg border border-gray-700/50">
+                  {/* Max Length */}
+                  <div className="flex flex-col gap-1.5">
+                    <div className="flex justify-between items-center">
+                      <span className="text-[11px] text-gray-400">최대 글자 수</span>
+                      <span className="text-[11px] font-mono font-bold text-indigo-400">
+                        {chunkMaxLength}자
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min="100"
+                      max="2000"
+                      step="50"
+                      value={chunkMaxLength}
+                      onChange={e => setChunkMaxLength(parseInt(e.target.value))}
+                      className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-indigo-500 hover:accent-indigo-400 transition-all"
+                    />
+                  </div>
+
+                  {/* Max Lines */}
+                  <div className="flex flex-col gap-1.5">
+                    <div className="flex justify-between items-center">
+                      <span className="text-[11px] text-gray-400">최대 줄 수</span>
+                      <span className="text-[11px] font-mono font-bold text-purple-400">
+                        {chunkMaxLines}줄
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min="5"
+                      max="100"
+                      step="1"
+                      value={chunkMaxLines}
+                      onChange={e => setChunkMaxLines(parseInt(e.target.value))}
+                      className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-purple-500 hover:accent-purple-400 transition-all"
+                    />
+                  </div>
+
+                  {/* Max Time */}
+                  <div className="flex flex-col gap-1.5">
+                    <div className="flex justify-between items-center">
+                      <span className="text-[11px] text-gray-400">최대 예상 시간</span>
+                      <span className="text-[11px] font-mono font-bold text-green-400">
+                        {chunkMaxEstimatedSeconds}초
+                      </span>
+                    </div>
+                    <input
+                      type="range"
+                      min="30"
+                      max="300"
+                      step="10"
+                      value={chunkMaxEstimatedSeconds}
+                      onChange={e => setChunkMaxEstimatedSeconds(parseInt(e.target.value))}
+                      className="w-full h-1 bg-gray-700 rounded-lg appearance-none cursor-pointer accent-green-500 hover:accent-green-400 transition-all"
+                    />
+                  </div>
+                </div>
+              </div>
+
+              {/* 3. Voice & Speed Selection */}
               <div className="flex flex-col gap-3 pt-2 border-t border-gray-700">
                 <div className="flex justify-between items-center gap-2">
                   <label className="text-xs font-semibold text-gray-400 uppercase tracking-wider">
@@ -1509,7 +1604,13 @@ export const MainContent: React.FC<MainContentProps> = ({
                   <div className="relative flex-grow">
                     <select
                       value={singleSpeakerVoice}
-                      onChange={e => setSingleSpeakerVoice(e.target.value)}
+                      onChange={e => {
+                        const selectedVoice = voices.find(v => v.id === e.target.value)
+                        console.log(
+                          `[Voice Selection] 🎤 음성 변경: ${selectedVoice ? `${selectedVoice.name} (${selectedVoice.id})` : e.target.value}`
+                        )
+                        setSingleSpeakerVoice(e.target.value)
+                      }}
                       className={`w-full bg-gray-700 border border-gray-600 rounded-md shadow-sm py-2 pl-3 pr-8 focus:outline-none focus:ring-indigo-500 focus:border-indigo-500 text-sm ${singleSpeakerVoice ? 'text-white' : 'text-gray-400'}`}
                     >
                       <option value="" disabled>
@@ -1549,6 +1650,28 @@ export const MainContent: React.FC<MainContentProps> = ({
                     )}
                   </button>
                 </div>
+
+                {/* Voice Description Edit */}
+                {singleSpeakerVoice &&
+                  (() => {
+                    const selectedVoice = voices.find(v => v.id === singleSpeakerVoice)
+                    if (!selectedVoice) return null
+                    return (
+                      <div className="flex items-center gap-2 mt-1">
+                        <PencilIcon className="w-3.5 h-3.5 text-gray-500 flex-shrink-0" />
+                        <input
+                          type="text"
+                          value={selectedVoice.description}
+                          onChange={e =>
+                            onUpdateVoiceDescription(singleSpeakerVoice, e.target.value)
+                          }
+                          className="flex-grow bg-transparent border-b border-gray-600 hover:border-gray-500 focus:border-indigo-500 text-xs text-gray-300 py-0.5 px-1 focus:outline-none transition-colors placeholder-gray-600"
+                          placeholder="보이스 설명을 입력하세요"
+                          title="보이스 설명 편집 (자동 저장됨)"
+                        />
+                      </div>
+                    )
+                  })()}
               </div>
 
               {/* 3. Director's Notes */}
@@ -1563,7 +1686,7 @@ export const MainContent: React.FC<MainContentProps> = ({
                   value={stylePrompt}
                   onChange={e => setStylePrompt(e.target.value)}
                   placeholder="AI에게 목소리 톤, 감정, 분위기를 구체적으로 지시하세요."
-                  className="w-full h-16 bg-gray-900/50 border border-gray-600 rounded-md p-2 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 resize-none"
+                  className="w-full h-16 bg-gray-900/50 border border-gray-600 rounded-md p-2 text-sm text-gray-200 placeholder-gray-500 focus:outline-none focus:ring-1 focus:ring-indigo-500 resize-y"
                 />
               </div>
 
@@ -1743,7 +1866,7 @@ export const MainContent: React.FC<MainContentProps> = ({
                 )}
 
                 {/* Chunk Management Section */}
-                {currentAudioItem?.audioChunks && currentAudioItem.audioChunks.length > 1 && (
+                {currentAudioItem?.audioChunks && currentAudioItem.audioChunks.length > 0 && (
                   <div className="mt-3 bg-gray-800/50 rounded-lg border border-gray-700/50">
                     <button
                       onClick={() => setExpandedChunks(!expandedChunks)}
