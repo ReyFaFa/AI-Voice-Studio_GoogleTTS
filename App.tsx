@@ -40,6 +40,7 @@ import {
   TtsApiKey,
 } from './types'
 import {
+  applyDetectedSpeakerLabels,
   DEFAULT_MULTI_SPEAKER_CONFIG,
   formatScriptLinesForTts,
   normalizeMultiSpeakerConfig,
@@ -386,15 +387,38 @@ export function App() {
   const handleSpeakerModeChange = (mode: SpeakerMode) => {
     setSpeakerMode(mode)
     if (mode === 'multi') {
-      setScriptLines(prev =>
-        prev.map(line => ({
-          ...line,
-          speakerId:
-            line.speakerId === 'speaker1' || line.speakerId === 'speaker2'
-              ? line.speakerId
-              : 'speaker1',
-        }))
+      const fullScript = scriptLines.map(line => line.text).join('\n')
+      const activeMultiSpeakerConfig = applyDetectedSpeakerLabels(
+        fullScript,
+        multiSpeakerConfig
       )
+
+      if (
+        activeMultiSpeakerConfig.speakers.some(
+          (speaker, index) => speaker.name !== multiSpeakerConfig.speakers[index]?.name
+        )
+      ) {
+        setMultiSpeakerConfig(activeMultiSpeakerConfig)
+      }
+
+      setScriptLines(prev => {
+        let fallbackSpeakerId: MultiSpeakerId = 'speaker1'
+        return prev.map(line => {
+          const parsed = parseSpeakerLine(
+            line.text,
+            activeMultiSpeakerConfig,
+            fallbackSpeakerId
+          )
+          fallbackSpeakerId = parsed.speakerId
+
+          return {
+            ...line,
+            speakerId: parsed.speakerId,
+            text: parsed.text,
+            estimatedTime: parsed.text.replace(/\s/g, '').length * 0.156,
+          }
+        })
+      })
     }
   }
 
@@ -589,6 +613,20 @@ export function App() {
   }, [scriptLines, speechSpeed])
 
   const handleScriptChange = (newFullScript: string) => {
+    const activeMultiSpeakerConfig =
+      speakerMode === 'multi'
+        ? applyDetectedSpeakerLabels(newFullScript, multiSpeakerConfig)
+        : multiSpeakerConfig
+
+    if (
+      speakerMode === 'multi' &&
+      activeMultiSpeakerConfig.speakers.some(
+        (speaker, index) => speaker.name !== multiSpeakerConfig.speakers[index]?.name
+      )
+    ) {
+      setMultiSpeakerConfig(activeMultiSpeakerConfig)
+    }
+
     const lines = newFullScript.split('\n')
     setScriptLines(prev => {
       const nextLines: ScriptLine[] = []
@@ -598,7 +636,7 @@ export function App() {
           prev[index]?.speakerId || nextLines[index - 1]?.speakerId || 'speaker1'
         const parsed =
           speakerMode === 'multi'
-            ? parseSpeakerLine(rawText, multiSpeakerConfig, fallbackSpeakerId)
+            ? parseSpeakerLine(rawText, activeMultiSpeakerConfig, fallbackSpeakerId)
             : { text: rawText, speakerId: prev[index]?.speakerId || 'Speaker' }
         const text = parsed.text
         const charCount = text.replace(/\s/g, '').length
