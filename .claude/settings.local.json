@@ -23,7 +23,9 @@
       "Bash(npm run build:*)",
       "mcp__context7__resolve-library-id",
       "Bash(ffprobe -v quiet -print_format json -show_streams -show_format \"d:/01_Antigravity/12_AI-Voice-Studio/개발문서/한편 이 고을을 쥐락펴락.wav\")",
-      "Bash(ffmpeg -i \"d:/01_Antigravity/12_AI-Voice-Studio/개발문서/한편 이 고을을 쥐락펴락.wav\" -af \"astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level:key=lavfi.astats.Overall.Peak_level:key=lavfi.astats.Overall.Flat_factor\" -f null -)"
+      "Bash(ffmpeg -i \"d:/01_Antigravity/12_AI-Voice-Studio/개발문서/한편 이 고을을 쥐락펴락.wav\" -af \"astats=metadata=1:reset=1,ametadata=print:key=lavfi.astats.Overall.RMS_level:key=lavfi.astats.Overall.Peak_level:key=lavfi.astats.Overall.Flat_factor\" -f null -)",
+      "WebFetch(domain:docs.cloud.google.com)",
+      "WebFetch(domain:github.com)"
     ]
   }
 }

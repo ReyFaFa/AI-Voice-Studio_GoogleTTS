@@ -18,15 +18,21 @@ export async function downloadChunksAsZip(
   const zip = new JSZip()
 
   for (const chunk of chunks) {
+    // 파일명 생성 로직: 첫 5단어 추출 (특수문자 제거)
+    const cleanText = chunk.text.replace(/[!,?.[\]{}()]/g, ' ') // 특수문자 제거
+    const words = cleanText.split(/\s+/).filter(w => w.length > 0)
+    const nameSlug = words.slice(0, 5).join('_') || 'chunk'
+    const displayIndex = String(chunk.index + 1).padStart(2, '0')
+
     // WAV 파일 생성
     if (chunk.buffer && !chunk.isFailed) {
       const wavBlob = encodeAudioBufferToWavBlob(chunk.buffer)
-      const wavFilename = `${String(chunk.index + 1).padStart(2, '0')}-chunk.wav`
+      const wavFilename = `${displayIndex}-${nameSlug}.wav`
       zip.file(wavFilename, wavBlob)
     }
 
     // 대본 텍스트 파일
-    const txtFilename = `${String(chunk.index + 1).padStart(2, '0')}-script.txt`
+    const txtFilename = `${displayIndex}-${nameSlug}.txt`
     zip.file(txtFilename, chunk.isFailed ? `[FAILED] ${chunk.text}` : chunk.text)
   }
 
@@ -455,13 +461,13 @@ export const analyzeScript = (script: string) => {
 export const splitTextIntoChunks = (
   text: string,
   maxLength: number,
-  maxLines: number = 40,
-  maxEstimatedSeconds: number = 145
+  maxLines: number = 15,
+  maxEstimatedSeconds: number = 60
 ): string[] => {
   if (maxLength <= 0) return [text]
 
-  // Split into sentences or lines using a regex that keeps the delimiters
-  const rawSentences = text.match(/[^.!?\n]+[.!?\n]*\s*/g) || [text]
+  // Split into sentences or lines using a regex that keeps the delimiters (including closing quotes/brackets)
+  const rawSentences = text.match(/[^.!?\n]+[.!?\n]*["'”’\])]*\s*/g) || [text]
   const finalChunks: string[] = []
   let currentChunk = ''
   let currentLineCount = 0

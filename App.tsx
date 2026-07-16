@@ -21,6 +21,7 @@ import { SubtitleGenerator } from './components/SubtitleGenerator'
 import { DocumentTextIcon, MicrophoneIcon, SettingsIcon, VOICES, XCircleIcon } from './constants'
 import {
   generateAudioWithFallback,
+  generateMultiSpeakerAudio,
   generateSingleSpeakerAudio,
   generateSrtFromParagraphTimings,
   previewVoice,
@@ -28,7 +29,25 @@ import {
   transcribeAudioWithSrt,
   uint8ArrayToBase64,
 } from './services/geminiService'
-import { AudioChunkItem, Preset, ScriptLine, SrtLine, TtsApiKey } from './types'
+import {
+  AudioChunkItem,
+  MultiSpeakerConfig,
+  MultiSpeakerId,
+  Preset,
+  ScriptLine,
+  SpeakerMode,
+  SrtLine,
+  TtsApiKey,
+} from './types'
+import {
+  DEFAULT_MULTI_SPEAKER_CONFIG,
+  formatScriptLinesForTts,
+  normalizeMultiSpeakerConfig,
+  parseSpeakerLine,
+  splitMultiSpeakerTextIntoChunks,
+  stripSpeakerPrefix,
+  validateMultiSpeakerConfig,
+} from './utils/multiSpeaker'
 
 // Defines the structure for each generated audio clip in the history
 export interface AudioHistoryItem {
@@ -66,11 +85,14 @@ async function runWithConcurrency<T>(
   concurrency: number
 ): Promise<PromiseSettledResult<T>[]> {
   const results: PromiseSettledResult<T>[] = new Array(tasks.length)
-  let index = 0
+  let nextTaskIndex = 0
 
   async function worker() {
-    while (index < tasks.length) {
-      const currentIndex = index++
+    while (true) {
+      const currentIndex = nextTaskIndex
+      nextTaskIndex++
+      if (currentIndex >= tasks.length) break
+
       try {
         const value = await tasks[currentIndex]()
         results[currentIndex] = { status: 'fulfilled', value }
@@ -165,9 +187,35 @@ export function App() {
   const [activeTab, setActiveTab] = useState<'tts' | 'subtitles'>('tts')
 
   const [singleSpeakerVoice, setSingleSpeakerVoice] = useState<string>('')
+  const [speakerMode, setSpeakerMode] = useState<SpeakerMode>(() => {
+    return localStorage.getItem('tts_speaker_mode') === 'multi' ? 'multi' : 'single'
+  })
+  const [multiSpeakerConfig, setMultiSpeakerConfig] = useState<MultiSpeakerConfig>(() => {
+    const saved = localStorage.getItem('tts_multi_speaker_config')
+    if (!saved) return normalizeMultiSpeakerConfig(DEFAULT_MULTI_SPEAKER_CONFIG)
+    try {
+      return normalizeMultiSpeakerConfig(JSON.parse(saved))
+    } catch {
+      return normalizeMultiSpeakerConfig(DEFAULT_MULTI_SPEAKER_CONFIG)
+    }
+  })
   const [speechSpeed, setSpeechSpeed] = useState<number>(0.8)
   const [toneLevel, setToneLevel] = useState<number>(2) // 1-5, 기본값 2 (심야 라디오 스타일)
   const [scriptLines, setScriptLines] = useState<ScriptLine[]>([])
+
+  // Chunking Settings (Persistent)
+  const [chunkMaxLength, setChunkMaxLength] = useState<number>(() => {
+    const saved = localStorage.getItem('chunk_max_length')
+    return saved ? parseInt(saved) : 400
+  })
+  const [chunkMaxLines, setChunkMaxLines] = useState<number>(() => {
+    const saved = localStorage.getItem('chunk_max_lines')
+    return saved ? parseInt(saved) : 16
+  })
+  const [chunkMaxEstimatedSeconds, setChunkMaxEstimatedSeconds] = useState<number>(() => {
+    const saved = localStorage.getItem('chunk_max_estimated_seconds')
+    return saved ? parseInt(saved) : 66
+  })
 
   // Advanced TTS Settings (Persistent)
   const [selectedModel, setSelectedModel] = useState<string>(() => {
@@ -202,6 +250,21 @@ export function App() {
     }
     return []
   })
+
+  // Custom Voice Descriptions (Persistent)
+  const [customVoiceDescriptions, setCustomVoiceDescriptions] = useState<Record<string, string>>(
+    () => {
+      const stored = localStorage.getItem('custom_voice_descriptions')
+      if (stored) {
+        try {
+          return JSON.parse(stored)
+        } catch (e) {
+          return {}
+        }
+      }
+      return {}
+    }
+  )
 
   const [ttsResult, setTtsResult] = useState<TtsResult>({ audioHistory: [], srtContent: null })
   const [activeAudioId, setActiveAudioId] = useState<string | null>(null)
@@ -256,15 +319,19 @@ export function App() {
     // Initial sample text
     if (scriptLines.length === 0) {
       setScriptLines([
-        { id: 'line-1', speakerId: 'Speaker', text: '안녕하세요! AI 보이스 스튜디오입니다.' },
+        {
+          id: 'line-1',
+          speakerId: speakerMode === 'multi' ? 'speaker1' : 'Speaker',
+          text: '안녕하세요! AI 보이스 스튜디오입니다.',
+        },
         {
           id: 'line-2',
-          speakerId: 'Speaker',
+          speakerId: speakerMode === 'multi' ? 'speaker1' : 'Speaker',
           text: '텍스트를 입력하고 줄 단위로 스타일을 지정해보세요.',
         },
         {
           id: 'line-3',
-          speakerId: 'Speaker',
+          speakerId: speakerMode === 'multi' ? 'speaker1' : 'Speaker',
           text: '원하는 목소리를 선택하여 오디오를 생성할 수 있습니다.',
         },
       ])
@@ -282,6 +349,67 @@ export function App() {
   }, [stylePrompt])
 
   useEffect(() => {
+    localStorage.setItem('tts_speaker_mode', speakerMode)
+  }, [speakerMode])
+
+  useEffect(() => {
+    localStorage.setItem('tts_multi_speaker_config', JSON.stringify(multiSpeakerConfig))
+  }, [multiSpeakerConfig])
+
+  // Custom Voice Descriptions localStorage 저장
+  useEffect(() => {
+    localStorage.setItem('custom_voice_descriptions', JSON.stringify(customVoiceDescriptions))
+  }, [customVoiceDescriptions])
+
+  // 커스텀 설명이 반영된 voices 목록
+  const voicesWithCustomDesc = useMemo(() => {
+    return VOICES.map(voice => ({
+      ...voice,
+      description: customVoiceDescriptions[voice.id] || voice.description,
+    }))
+  }, [customVoiceDescriptions])
+
+  const handleUpdateVoiceDescription = useCallback((voiceId: string, description: string) => {
+    setCustomVoiceDescriptions(prev => {
+      const next = { ...prev }
+      // 기본값과 같으면 커스텀 항목에서 제거 (클린업)
+      const defaultVoice = VOICES.find(v => v.id === voiceId)
+      if (defaultVoice && description === defaultVoice.description) {
+        delete next[voiceId]
+      } else {
+        next[voiceId] = description
+      }
+      return next
+    })
+  }, [])
+
+  const handleSpeakerModeChange = (mode: SpeakerMode) => {
+    setSpeakerMode(mode)
+    if (mode === 'multi') {
+      setScriptLines(prev =>
+        prev.map(line => ({
+          ...line,
+          speakerId:
+            line.speakerId === 'speaker1' || line.speakerId === 'speaker2'
+              ? line.speakerId
+              : 'speaker1',
+        }))
+      )
+    }
+  }
+
+  const handleUpdateMultiSpeaker = (
+    speakerId: MultiSpeakerId,
+    updates: { name?: string; voiceId?: string }
+  ) => {
+    setMultiSpeakerConfig(prev => ({
+      speakers: normalizeMultiSpeakerConfig(prev).speakers.map(speaker =>
+        speaker.id === speakerId ? { ...speaker, ...updates } : speaker
+      ),
+    }))
+  }
+
+  useEffect(() => {
     localStorage.setItem('tts_selected_model', selectedModel)
   }, [selectedModel])
 
@@ -296,6 +424,17 @@ export function App() {
   useEffect(() => {
     localStorage.setItem('tts_api_keys', JSON.stringify(ttsApiKeys))
   }, [ttsApiKeys])
+
+  // 청크 설정 localStorage 저장
+  useEffect(() => {
+    localStorage.setItem('chunk_max_length', chunkMaxLength.toString())
+  }, [chunkMaxLength])
+  useEffect(() => {
+    localStorage.setItem('chunk_max_lines', chunkMaxLines.toString())
+  }, [chunkMaxLines])
+  useEffect(() => {
+    localStorage.setItem('chunk_max_estimated_seconds', chunkMaxEstimatedSeconds.toString())
+  }, [chunkMaxEstimatedSeconds])
 
   // TTS API 키 추가
   const handleAddTtsKey = () => {
@@ -344,6 +483,12 @@ export function App() {
       stylePrompt,
       model: selectedModel,
       speed: speechSpeed,
+      maxLength: chunkMaxLength,
+      maxLines: chunkMaxLines,
+      maxEstimatedSeconds: chunkMaxEstimatedSeconds,
+      createdAt: new Date().toISOString(),
+      speakerMode,
+      multiSpeakerConfig: normalizeMultiSpeakerConfig(multiSpeakerConfig),
     }
     const updated = [...presets, newPreset]
     setPresets(updated)
@@ -361,9 +506,16 @@ export function App() {
     if (!preset) return
 
     setSingleSpeakerVoice(preset.voiceId)
+    handleSpeakerModeChange(preset.speakerMode || 'single')
+    if (preset.multiSpeakerConfig) {
+      setMultiSpeakerConfig(normalizeMultiSpeakerConfig(preset.multiSpeakerConfig))
+    }
     setStylePrompt(preset.stylePrompt)
     setSelectedModel(preset.model)
     setSpeechSpeed(preset.speed)
+    if (preset.maxLength) setChunkMaxLength(preset.maxLength)
+    if (preset.maxLines) setChunkMaxLines(preset.maxLines)
+    if (preset.maxEstimatedSeconds) setChunkMaxEstimatedSeconds(preset.maxEstimatedSeconds)
   }
 
   const handleExportPreset = () => {
@@ -374,6 +526,11 @@ export function App() {
       stylePrompt,
       model: selectedModel,
       speed: speechSpeed,
+      maxLength: chunkMaxLength,
+      maxLines: chunkMaxLines,
+      maxEstimatedSeconds: chunkMaxEstimatedSeconds,
+      speakerMode,
+      multiSpeakerConfig: normalizeMultiSpeakerConfig(multiSpeakerConfig),
     }
 
     const jsonString = JSON.stringify(currentPreset, null, 2)
@@ -396,11 +553,19 @@ export function App() {
         const importedPreset: Preset = JSON.parse(content)
 
         // Simple validation
-        if (importedPreset.voiceId && importedPreset.model) {
-          setSingleSpeakerVoice(importedPreset.voiceId)
+        if ((importedPreset.voiceId || importedPreset.multiSpeakerConfig) && importedPreset.model) {
+          setSingleSpeakerVoice(importedPreset.voiceId || '')
+          handleSpeakerModeChange(importedPreset.speakerMode || 'single')
+          if (importedPreset.multiSpeakerConfig) {
+            setMultiSpeakerConfig(normalizeMultiSpeakerConfig(importedPreset.multiSpeakerConfig))
+          }
           setStylePrompt(importedPreset.stylePrompt || '')
           setSelectedModel(importedPreset.model)
           setSpeechSpeed(importedPreset.speed || 1.0)
+          if (importedPreset.maxLength) setChunkMaxLength(importedPreset.maxLength)
+          if (importedPreset.maxLines) setChunkMaxLines(importedPreset.maxLines)
+          if (importedPreset.maxEstimatedSeconds)
+            setChunkMaxEstimatedSeconds(importedPreset.maxEstimatedSeconds)
           alert('프리셋을 불러왔습니다.')
         } else {
           alert('올바르지 않은 프리셋 파일입니다.')
@@ -426,26 +591,38 @@ export function App() {
   const handleScriptChange = (newFullScript: string) => {
     const lines = newFullScript.split('\n')
     setScriptLines(prev => {
-      return lines.map((text, index) => {
+      const nextLines: ScriptLine[] = []
+
+      lines.forEach((rawText, index) => {
+        const fallbackSpeakerId =
+          prev[index]?.speakerId || nextLines[index - 1]?.speakerId || 'speaker1'
+        const parsed =
+          speakerMode === 'multi'
+            ? parseSpeakerLine(rawText, multiSpeakerConfig, fallbackSpeakerId)
+            : { text: rawText, speakerId: prev[index]?.speakerId || 'Speaker' }
+        const text = parsed.text
         const charCount = text.replace(/\s/g, '').length
         const estimatedTime = charCount * 0.156
 
         if (index < prev.length) {
-          return {
+          nextLines.push({
             ...prev[index],
-            text: text,
-            estimatedTime: estimatedTime,
-          }
+            speakerId: parsed.speakerId,
+            text,
+            estimatedTime,
+          })
         } else {
-          return {
+          nextLines.push({
             id: `line-${Date.now()}-${index}-${Math.random().toString(36).substr(2, 9)}`,
-            speakerId: 'Speaker',
-            text: text,
-            estimatedTime: estimatedTime,
+            speakerId: parsed.speakerId,
+            text,
+            estimatedTime,
             style: '',
-          }
+          })
         }
       })
+
+      return nextLines
     })
   }
 
@@ -467,14 +644,28 @@ export function App() {
 
   const handleRemoveScriptLine = (id: string) => {
     if (scriptLines.length <= 1) {
-      setScriptLines([{ id: `line-${Date.now()}`, speakerId: 'Speaker', text: '' }])
+      setScriptLines([
+        {
+          id: `line-${Date.now()}`,
+          speakerId: speakerMode === 'multi' ? 'speaker1' : 'Speaker',
+          text: '',
+        },
+      ])
     } else {
       setScriptLines(prev => prev.filter(l => l.id !== id))
     }
   }
 
   const handleAddScriptLine = () => {
-    setScriptLines(prev => [...prev, { id: `line-${Date.now()}`, speakerId: 'Speaker', text: '' }])
+    setScriptLines(prev => [
+      ...prev,
+      {
+        id: `line-${Date.now()}`,
+        speakerId:
+          speakerMode === 'multi' ? prev[prev.length - 1]?.speakerId || 'speaker1' : 'Speaker',
+        text: '',
+      },
+    ])
   }
 
   const handleRemoveEmptyScriptLines = () => {
@@ -482,7 +673,13 @@ export function App() {
       const filtered = prev.filter(line => line.text.trim().length > 0)
       return filtered.length > 0
         ? filtered
-        : [{ id: `line-${Date.now()}`, speakerId: 'Speaker', text: '' }]
+        : [
+            {
+              id: `line-${Date.now()}`,
+              speakerId: speakerMode === 'multi' ? 'speaker1' : 'Speaker',
+              text: '',
+            },
+          ]
     })
   }
 
@@ -525,6 +722,7 @@ export function App() {
         if (index <= 0) return prev
         const prevLine = newLines[index - 1]
         const currLine = newLines[index]
+        if (speakerMode === 'multi' && prevLine.speakerId !== currLine.speakerId) return prev
 
         const combinedText = (prevLine.text.trim() + ' ' + currLine.text.trim()).trim()
         prevLine.text = combinedText
@@ -535,6 +733,7 @@ export function App() {
         if (index >= newLines.length - 1) return prev
         const currLine = newLines[index]
         const nextLine = newLines[index + 1]
+        if (speakerMode === 'multi' && currLine.speakerId !== nextLine.speakerId) return prev
 
         const combinedText = (currLine.text.trim() + ' ' + nextLine.text.trim()).trim()
         currLine.text = combinedText
@@ -549,9 +748,6 @@ export function App() {
 
   const handleAutoFormatScript = (options: AutoFormatOptions) => {
     setScriptLines(prev => {
-      // Combine existing lines into one string, handling existing newlines as spaces to reflow
-      const fullText = prev.map(l => l.text).join(' ')
-
       const triggers = []
       if (options.period) triggers.push('\\.')
       if (options.question) triggers.push('\\?')
@@ -560,9 +756,6 @@ export function App() {
 
       if (triggers.length === 0) return prev
 
-      // 보호할 패턴 (말줄임표 등 연속된 마침표)을 임시 문자로 치환
-      let safeText = fullText.replace(/\.{2,}/g, match => match.replace(/\./g, '___DOT___'))
-
       const pattern = `([${triggers.join('')}])`
       // 문장부호 뒤에 닫는 따옴표등이 올 수 있고, 그 뒤에 공백이 오는 경우를 처리
       // 예: ." 또는 .' 또는 .”
@@ -570,34 +763,51 @@ export function App() {
       const splitRegex = new RegExp(`(${pattern}${quotePattern})\\s+`, 'g')
       const endRegex = new RegExp(`(${pattern}${quotePattern})$`, 'g')
 
-      let newText = safeText.replace(splitRegex, '$1\n').replace(endRegex, '$1\n')
+      const splitText = (text: string): string[] => {
+        let safeText = text.replace(/\.{2,}/g, match => match.replace(/\./g, '___DOT___'))
+        safeText = safeText.replace(splitRegex, '$1\n').replace(endRegex, '$1\n')
+        return safeText
+          .replace(/___DOT___/g, '.')
+          .split('\n')
+          .map(value => value.trim())
+          .filter(Boolean)
+      }
 
-      // 임시 문자를 다시 마침표로 복원
-      newText = newText.replace(/___DOT___/g, '.')
+      const sourceLines =
+        speakerMode === 'multi'
+          ? prev
+          : [{ id: 'combined', speakerId: 'Speaker', text: prev.map(l => l.text).join(' ') }]
+      const formatted = sourceLines.flatMap(sourceLine =>
+        splitText(sourceLine.text).map(text => ({ sourceLine, text }))
+      )
 
-      const newLines = newText
-        .split('\n')
-        .map(t => t.trim())
-        .filter(t => t.length > 0)
+      if (formatted.length === 0) {
+        return [
+          {
+            id: `line-${Date.now()}`,
+            speakerId: speakerMode === 'multi' ? 'speaker1' : 'Speaker',
+            text: '',
+          },
+        ]
+      }
 
-      if (newLines.length === 0)
-        return [{ id: `line-${Date.now()}`, speakerId: 'Speaker', text: '' }]
-
-      return newLines.map((text, index) => {
-        const charCount = text.replace(/\s/g, '').length
-        return {
-          id: `line-${Date.now()}-${index}`,
-          speakerId: 'Speaker',
-          text: text,
-          estimatedTime: charCount * 0.156,
-          style: '',
-        }
-      })
+      return formatted.map(({ sourceLine, text }, index) => ({
+        id: `line-${Date.now()}-${index}`,
+        speakerId: sourceLine.speakerId,
+        text,
+        estimatedTime: text.replace(/\s/g, '').length * 0.156,
+        style: sourceLine.style || '',
+      }))
     })
   }
 
   const handlePreviewVoice = async (voiceId: string) => {
     if (isPreviewLoading[voiceId]) return
+
+    const selectedVoice = VOICES.find(v => v.id === voiceId)
+    console.log(
+      `[Voice Preview] 🔊 음성 샘플 듣기: ${selectedVoice ? `${selectedVoice.name} (${selectedVoice.id})` : voiceId}`
+    )
 
     setIsPreviewLoading(prev => ({ ...prev, [voiceId]: true }))
     try {
@@ -621,23 +831,84 @@ export function App() {
     }
   }
 
+  const getSpeakerSetupError = (): string | null => {
+    if (speakerMode === 'single') {
+      return singleSpeakerVoice ? null : '음성을 선택해주세요.'
+    }
+    if (selectedModel.includes('native-audio-dialog')) {
+      return '2인 대화 모드는 Flash TTS 또는 Pro TTS 모델에서만 사용할 수 있습니다.'
+    }
+    return validateMultiSpeakerConfig(multiSpeakerConfig)
+  }
+
+  const generateConfiguredAudio = (
+    prompt: string,
+    signal?: AbortSignal,
+    chunkInfo?: { chunkIndex: number; totalChunks: number; previousText?: string }
+  ): Promise<string> => {
+    const ttsKeys = ttsApiKeys.filter(item => item.key.trim() !== '').map(item => item.key)
+    if (speakerMode === 'multi') {
+      return generateMultiSpeakerAudio(
+        prompt,
+        normalizeMultiSpeakerConfig(multiSpeakerConfig).speakers,
+        selectedModel,
+        speechSpeed,
+        toneLevel,
+        stylePrompt,
+        signal,
+        chunkInfo,
+        ttsKeys,
+        userApiKey
+      )
+    }
+
+    return generateSingleSpeakerAudio(
+      prompt,
+      singleSpeakerVoice,
+      selectedModel,
+      speechSpeed,
+      toneLevel,
+      stylePrompt,
+      signal,
+      chunkInfo,
+      ttsKeys,
+      userApiKey
+    )
+  }
+
   const handleGenerateAudio = async () => {
-    const fullText = scriptLines
+    const plainText = scriptLines
       .map(l => l.text)
       .join('\n')
       .trim()
-    if (!fullText) {
+    const fullText = formatScriptLinesForTts(scriptLines, speakerMode, multiSpeakerConfig)
+    if (!plainText) {
       setError('변환할 텍스트를 입력해주세요.')
       return
     }
-    if (fullText.length > MAX_CHAR_LIMIT) {
+    if (plainText.length > MAX_CHAR_LIMIT) {
       setError(`글자 수는 ${MAX_CHAR_LIMIT.toLocaleString()}자를 초과할 수 없습니다.`)
       return
     }
-    if (!singleSpeakerVoice) {
-      alert('음성을 선택해주세요. 좌측 설정에서 목소리를 선택한 후 다시 시도해주세요.')
-      setError('음성을 선택해주세요.')
+    const speakerSetupError = getSpeakerSetupError()
+    if (speakerSetupError) {
+      setError(speakerSetupError)
       return
+    }
+
+    if (speakerMode === 'multi') {
+      console.log(
+        '[Full Generation] 🚀 2인 대화 생성 시작:',
+        normalizeMultiSpeakerConfig(multiSpeakerConfig).speakers.map(speaker => ({
+          speaker: speaker.name,
+          voice: speaker.voiceId,
+        }))
+      )
+    } else {
+      const selectedVoice = VOICES.find(v => v.id === singleSpeakerVoice)
+      console.log(
+        `[Full Generation] 🚀 전체 생성 시작 - 음성: ${selectedVoice ? `${selectedVoice.name} (${selectedVoice.id})` : singleSpeakerVoice}`
+      )
     }
 
     setIsLoading(true)
@@ -710,9 +981,21 @@ export function App() {
         setOriginalSrtLines(JSON.parse(JSON.stringify(finalSrtLines)))
         setHasTimestampEdits(false)
       } else {
-        // 청크 분할: 예상시간 기준으로 균등 분할
-        // 고주파음 방지를 위해 1200자 50줄 상한으로 롤백
-        const textChunks = splitTextIntoChunks(fullText, 1200, 50, 200)
+        // 청크 분할: 프리셋 및 설정된 분할 기준 적용
+        const textChunks =
+          speakerMode === 'multi'
+            ? splitMultiSpeakerTextIntoChunks(
+                fullText,
+                chunkMaxLength,
+                chunkMaxLines,
+                chunkMaxEstimatedSeconds
+              )
+            : splitTextIntoChunks(
+                fullText,
+                chunkMaxLength,
+                chunkMaxLines,
+                chunkMaxEstimatedSeconds
+              )
         const totalChunks = textChunks.length
 
         // ============================================================
@@ -984,21 +1267,10 @@ export function App() {
                   previousText = prevLines.slice(-3).join('\n')
                 }
 
-                const ttsKeys = ttsApiKeys
-                  .filter(item => item.key.trim() !== '')
-                  .map(item => item.key)
-
-                const base64Pcm = await generateSingleSpeakerAudio(
+                const base64Pcm = await generateConfiguredAudio(
                   chunkText,
-                  singleSpeakerVoice,
-                  selectedModel,
-                  speechSpeed,
-                  toneLevel,
-                  stylePrompt,
                   abortControllerRef.current!.signal,
-                  { chunkIndex: i, totalChunks, previousText },
-                  ttsKeys,
-                  userApiKey
+                  { chunkIndex: i, totalChunks, previousText }
                 )
 
                 const chunkBlob = createWavBlobFromBase64Pcm(base64Pcm)
@@ -1027,7 +1299,14 @@ export function App() {
                 )
 
                 // 오디오 길이 검증
-                const charCount = chunkText.replace(/\s/g, '').length
+                const spokenChunkText =
+                  speakerMode === 'multi'
+                    ? chunkText
+                        .split('\n')
+                        .map(line => stripSpeakerPrefix(line, multiSpeakerConfig))
+                        .join('\n')
+                    : chunkText
+                const charCount = spokenChunkText.replace(/\s/g, '').length
                 const minExpectedSec = charCount * 0.1
                 const actualSpeechSec = chunkBuffer.duration - 1.0
 
@@ -1076,7 +1355,6 @@ export function App() {
 
         for (let i = 0; i < settled.length; i++) {
           const result = settled[i]
-
           if (result.status === 'rejected') {
             // AbortError는 전파
             if (result.reason instanceof DOMException && result.reason.name === 'AbortError') {
@@ -1085,6 +1363,7 @@ export function App() {
             // 첫 청크 실패 시 전체 중단
             if (i === 0) throw result.reason
 
+            console.error(`[Merge] ❌ 청크 ${i + 1} 생성 실패:`, result.reason)
             failedChunkIndices.push(i)
             audioChunkItems.push({
               id: `chunk-${i}-failed-${Date.now()}`,
@@ -1097,10 +1376,25 @@ export function App() {
             continue
           }
 
-          const { buffer, text, durationMs } = result.value
+          // status가 'fulfilled'인 경우에만 value에 접근
+          const { index: chunkIdx, buffer, text, durationMs } = result.value
+
+          // 인덱스 정합성 확인 로그
+          console.log(
+            `[Merge] 📥 병합 중: ${i + 1}/${totalChunks} (청크 인덱스: ${chunkIdx}, 길이: ${(durationMs / 1000).toFixed(2)}s)`
+          )
+
+          if (chunkIdx !== i) {
+            console.error(`[Merge] ⚠️ 순서 불일치 감지! 기대값: ${i}, 실제값: ${chunkIdx}`)
+          }
 
           // SRT 생성
-          const inputLines = text.split('\n').filter(line => line.trim().length > 0)
+          const inputLines = text
+            .split('\n')
+            .filter(line => line.trim().length > 0)
+            .map(line =>
+              speakerMode === 'multi' ? stripSpeakerPrefix(line, multiSpeakerConfig) : line
+            )
           const speechDurationMs = durationMs - 1000 // 1초 무음 제외
           const avgLineDurationMs = speechDurationMs / inputLines.length
 
@@ -1636,6 +1930,11 @@ export function App() {
     }
 
     const chunk = targetItem.audioChunks[chunkIndex]
+    // 파일명 생성 로직: 첫 5단어 추출 (특수문자 제거)
+    const cleanText = chunk.text.replace(/[!,?.[\]{}()]/g, ' ')
+    const words = cleanText.split(/\s+/).filter(w => w.length > 0)
+    const nameSlug = words.slice(0, 5).join('_') || 'chunk'
+    const displayIndex = String(chunkIndex + 1).padStart(2, '0')
 
     try {
       // WAV 파일로 인코딩
@@ -1645,7 +1944,7 @@ export function App() {
       const url = URL.createObjectURL(wavBlob)
       const a = document.createElement('a')
       a.href = url
-      a.download = `chunk-${String(chunkIndex + 1).padStart(2, '0')}.wav`
+      a.download = `${displayIndex}-${nameSlug}.wav`
       document.body.appendChild(a)
       a.click()
       document.body.removeChild(a)
@@ -1663,12 +1962,20 @@ export function App() {
     }
 
     const sampleLines = scriptLines.slice(0, 5)
-    const sampleText = sampleLines.map(line => line.text).join('\n')
+    const sampleText = formatScriptLinesForTts(sampleLines, speakerMode, multiSpeakerConfig)
 
     if (sampleText.trim().length === 0) {
       setError('미리보기할 텍스트가 없습니다.')
       return
     }
+
+    const speakerSetupError = getSpeakerSetupError()
+    if (speakerSetupError) {
+      setError(speakerSetupError)
+      return
+    }
+
+    console.log(`[Sample Preview] 🧪 ${speakerMode === 'multi' ? '2인 대화' : '1인 낭독'} 샘플 생성 시작`)
 
     setSampleLoading(true)
     setSampleAudio(null)
@@ -1676,19 +1983,7 @@ export function App() {
     setError(null)
 
     try {
-      const ttsKeys = ttsApiKeys.filter(item => item.key.trim() !== '').map(item => item.key)
-      const audioData = await generateSingleSpeakerAudio(
-        sampleText,
-        singleSpeakerVoice,
-        selectedModel,
-        speechSpeed,
-        toneLevel,
-        stylePrompt,
-        undefined,
-        undefined,
-        ttsKeys,
-        userApiKey
-      )
+      const audioData = await generateConfiguredAudio(sampleText)
 
       const wavBlob = createWavBlobFromBase64Pcm(audioData)
       const url = URL.createObjectURL(wavBlob)
@@ -1737,7 +2032,11 @@ export function App() {
     try {
       // ✅ 최신 대본(scriptLines)에서 해당 청크 영역의 텍스트를 동적으로 추출
       // 각 청크가 담고 있는 줄 수를 기준으로 scriptLines의 오프셋을 계산
-      const currentFullText = scriptLines.map(l => l.text).join('\n')
+      const currentFullText = formatScriptLinesForTts(
+        scriptLines,
+        speakerMode,
+        multiSpeakerConfig
+      )
       const allLines = currentFullText.split('\n').filter(l => l.trim().length > 0)
 
       // 청크별 줄 수 배열 계산
@@ -1759,18 +2058,13 @@ export function App() {
         previousText = prevLines.slice(-3).join('\n')
       }
 
-      const ttsKeys = ttsApiKeys.filter(item => item.key.trim() !== '').map(item => item.key)
-      const base64Pcm = await generateSingleSpeakerAudio(
+      const speakerSetupError = getSpeakerSetupError()
+      if (speakerSetupError) throw new Error(speakerSetupError)
+
+      const base64Pcm = await generateConfiguredAudio(
         updatedChunkText, // ✅ 최신 대본 텍스트 사용
-        singleSpeakerVoice,
-        selectedModel,
-        speechSpeed,
-        toneLevel,
-        stylePrompt,
         abortControllerRef.current.signal,
-        { chunkIndex, totalChunks: targetItem.audioChunks.length, previousText },
-        ttsKeys,
-        userApiKey
+        { chunkIndex, totalChunks: targetItem.audioChunks.length, previousText }
       )
 
       const audioContext = new AudioContext({ sampleRate: 48000 })
@@ -2223,11 +2517,16 @@ export function App() {
           <MainContent
             singleSpeakerVoice={singleSpeakerVoice}
             setSingleSpeakerVoice={setSingleSpeakerVoice}
+            speakerMode={speakerMode}
+            setSpeakerMode={handleSpeakerModeChange}
+            multiSpeakerConfig={multiSpeakerConfig}
+            onUpdateMultiSpeaker={handleUpdateMultiSpeaker}
             speechSpeed={speechSpeed}
             setSpeechSpeed={setSpeechSpeed}
             toneLevel={toneLevel}
             setToneLevel={setToneLevel}
-            voices={VOICES}
+            voices={voicesWithCustomDesc}
+            onUpdateVoiceDescription={handleUpdateVoiceDescription}
             onPreviewVoice={handlePreviewVoice}
             isPreviewLoading={isPreviewLoading}
             srtSplitCharCount={srtSplitCharCount}
@@ -2245,6 +2544,13 @@ export function App() {
             onLoadPreset={handleLoadPreset}
             onExportPreset={handleExportPreset}
             onImportPreset={handleImportPreset}
+            // Chunking Settings Props
+            chunkMaxLength={chunkMaxLength}
+            setChunkMaxLength={setChunkMaxLength}
+            chunkMaxLines={chunkMaxLines}
+            setChunkMaxLines={setChunkMaxLines}
+            chunkMaxEstimatedSeconds={chunkMaxEstimatedSeconds}
+            setChunkMaxEstimatedSeconds={setChunkMaxEstimatedSeconds}
             isLoading={isLoading}
             loadingStatus={loadingStatus}
             error={error}
